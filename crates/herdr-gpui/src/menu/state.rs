@@ -182,6 +182,8 @@ pub(crate) struct MenuState {
     pub(super) github_adding: Option<String>,
     /// The pasted-token field, while the GitHub page shows it.
     pub(super) github_token: Option<Entity<crate::search_input::SearchInput>>,
+    /// The GitHub Enterprise Server field of the account being added.
+    pub(super) github_server: Option<Entity<crate::search_input::SearchInput>>,
     /// Logins this window already toasted as waiting on GitHub App approval.
     pub(super) github_toasted: std::collections::HashSet<String>,
     /// The GitLab page's instances, fields, and work under way.
@@ -424,6 +426,7 @@ impl MenuState {
             github_account: None,
             github_adding: None,
             github_token: None,
+            github_server: None,
             github_toasted: Default::default(),
             gitlab: Default::default(),
             removing_devices: Default::default(),
@@ -486,6 +489,7 @@ impl MenuState {
         self.github_account = None;
         self.github_adding = None;
         self.github_token = None;
+        self.github_server = None;
         // Closing the menu stops a GitLab connection, as it does GitHub's.
         self.gitlab.connecting = None;
         self.gitlab.form = false;

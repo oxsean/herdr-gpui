@@ -7,8 +7,8 @@ fn target() -> Target {
     Target::try_from(&fixture().unwrap()).unwrap()
 }
 
-fn token() -> Arc<SecretString> {
-    Arc::new("fixture-token".into())
+fn token() -> ServerToken {
+    ServerToken::github(Arc::new("fixture-token".into()))
 }
 
 fn tracked() -> Actions {
@@ -33,7 +33,8 @@ fn a_target_comes_only_from_an_open_pull_request_with_its_identity() {
     for strip in [
         |pr: &mut PullRequest| pr.id.clear(),
         |pr: &mut PullRequest| pr.head_ref_oid.clear(),
-        |pr: &mut PullRequest| pr.url = "https://example.com/example/project/pull/8".into(),
+        |pr: &mut PullRequest| pr.url = "http://github.com/example/project/pull/8".into(),
+        |pr: &mut PullRequest| pr.url = "https://exa_mple.com/example/project/pull/8".into(),
         |pr: &mut PullRequest| pr.url = "https://github.com/example/project/pull/9".into(),
         |pr: &mut PullRequest| pr.url = "https://github.com/example/project/pull/8/x".into(),
     ] {
@@ -44,6 +45,15 @@ fn a_target_comes_only_from_an_open_pull_request_with_its_identity() {
             Err(crate::Error::PrActions(Error::Target))
         ));
     }
+    // The verified link names the server every action on it is sent to.
+    let mut pr = fixture().unwrap();
+    pr.url = "https://git.example.com/example/project/pull/8".into();
+    let target = Target::try_from(&pr).unwrap();
+    assert_eq!(
+        target.server,
+        Server::enterprise("git.example.com").unwrap()
+    );
+    assert!(!target.same_pull_request(&self::target()));
 }
 
 #[test]

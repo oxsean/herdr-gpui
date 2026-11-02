@@ -3,7 +3,7 @@
 //! deserialized straight into redacted types and never pass through a String.
 
 use super::{
-    Result,
+    Result, Server, ServerToken,
     http::{agent, authorization, response},
     log,
     token::Credential,
@@ -89,6 +89,8 @@ pub(super) enum Reply {
 }
 
 pub struct Profile {
+    /// The server the account signed in to; its token is sent nowhere else.
+    pub server: Server,
     pub login: String,
     /// GitHub's address for the account's picture. The app fetches and
     /// caches it; nothing here downloads it.
@@ -108,6 +110,7 @@ impl Profile {
     /// A signed-in account without an avatar, for tests outside this module.
     pub fn fixture(login: &str, token: Arc<SecretString>, organizations: &[&str]) -> Self {
         Self {
+            server: Server::GitHub,
             login: login.into(),
             avatar_url: String::new(),
             token,
@@ -141,19 +144,29 @@ impl Source {
 }
 
 pub(super) fn profile(token: Arc<SecretString>) -> Result<Profile> {
-    profile_from(token, false)
+    profile_on(Server::GitHub, token)
 }
 
-/// The account `token` belongs to. `github_cli` records the GitHub CLI as
-/// its source, with whether its scopes reach private repositories.
-pub(super) fn profile_from(token: Arc<SecretString>, github_cli: bool) -> Result<Profile> {
+/// The account `token` belongs to on `server`.
+pub(super) fn profile_on(server: Server, token: Arc<SecretString>) -> Result<Profile> {
+    profile_from(server, token, false)
+}
+
+/// The account `token` belongs to on `server`. `github_cli` records the
+/// GitHub CLI as its source, with whether its scopes reach private
+/// repositories.
+pub(super) fn profile_from(
+    server: Server,
+    token: Arc<SecretString>,
+    github_cli: bool,
+) -> Result<Profile> {
     #[derive(Deserialize)]
     struct User {
         login: String,
         avatar_url: String,
     }
-    let reply = agent(Duration::from_secs(15))
-        .get("https://api.github.com/user")
+    let reply = agent(&server, Duration::from_secs(15))
+        .get(server.rest_url("/user"))
         .header("User-Agent", "Herdr-GPUI")
         .header("Accept", "application/vnd.github+json")
         .header("Authorization", authorization(&token)?)
@@ -181,9 +194,11 @@ pub(super) fn profile_from(token: Arc<SecretString>, github_cli: bool) -> Result
     tracing::info!(
         category = "github_profile",
         login = user.login.as_str(),
+        server = server.host(),
         "GitHub profile loaded"
     );
     Ok(Profile {
+        server,
         login: user.login,
         avatar_url: user.avatar_url,
         token,
@@ -194,12 +209,17 @@ pub(super) fn profile_from(token: Arc<SecretString>, github_cli: bool) -> Result
 }
 
 impl Profile {
+    /// The account's token, bound to its server.
+    pub fn server_token(&self) -> ServerToken {
+        ServerToken::new(self.server.clone(), self.token.clone())
+    }
+
     /// Keeps the organizations `old` listed when this check could not list
     /// them, so a failed request never moves the account's repositories to
     /// the main account. Only for the same login: another account's are not
     /// this one's.
     pub(super) fn keep_organizations(&mut self, old: &Self) {
-        if self.organizations.is_none() && self.login == old.login {
+        if self.organizations.is_none() && self.login == old.login && self.server == old.server {
             self.organizations = old.organizations.clone();
         }
     }
@@ -262,7 +282,7 @@ pub(super) fn with_organizations(
     let mut cooldown = None;
     let memberships = match super::graphql(
         "organizations",
-        &profile.token,
+        &profile.server_token(),
         ORGANIZATIONS,
         serde_json::json!({}),
         Duration::from_secs(15),
@@ -380,4 +400,10 @@ pub(super) fn token_reply(value: TokenResponse, client: &str) -> Result<Reply> {
             ))
         }
     }
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("viewerOrganizations", ORGANIZATIONS);
 }

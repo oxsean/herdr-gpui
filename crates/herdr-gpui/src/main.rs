@@ -242,3 +242,7 @@ fn main() -> std::process::ExitCode {
     #[cfg(not(feature = "integration-test"))]
     std::process::ExitCode::SUCCESS
 }
+
+#[cfg(test)]
+#[path = "../../test-support/graphql_export.rs"]
+mod graphql_export;

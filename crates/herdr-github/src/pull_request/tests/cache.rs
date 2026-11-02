@@ -40,7 +40,7 @@ struct Peer {
 /// The fixture account alone, signed in as `fixture`.
 fn tokens() -> crate::Tokens {
     let profile = crate::Profile::fixture("fixture", Arc::new("fixture".into()), &[]);
-    crate::Tokens::new(&profile, [])
+    crate::Tokens::new(Some(&profile), [])
 }
 
 fn answered(input: Input, result: Result) -> Batch {

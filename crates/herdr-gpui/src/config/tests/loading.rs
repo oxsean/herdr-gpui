@@ -203,7 +203,7 @@ fn unknown_keys_are_ignored_and_reported() -> anyhow::Result<()> {
              [terminal]\nsize = 18\nligatures = true\n\
              [notifications]\nenabled = true\nsound = 'ping'\n\
              [clipboard_toast]\nduration = 3\n[features]\nnew_flag = true\n\
-             [github]\nenterprise = 'x'\n[layout]\nsidebar_gap = 4\nshadow = true\n\
+             [github]\nfuture = 'x'\n[layout]\nsidebar_gap = 4\nshadow = true\n\
              [usage.providers.future]\ntoken = 'y'",
     )?;
     assert_eq!(config.theme, "Nord");
@@ -217,7 +217,7 @@ fn unknown_keys_are_ignored_and_reported() -> anyhow::Result<()> {
             "features.new_flag",
             "future",
             "future_table",
-            "github.enterprise",
+            "github.future",
             "layout.shadow",
             "notifications.sound",
             "terminal.ligatures",
@@ -228,7 +228,7 @@ fn unknown_keys_are_ignored_and_reported() -> anyhow::Result<()> {
         config.diagnostic().as_deref(),
         Some(
             "config-gpui.local.toml: ignoring unknown keys clipboard_toast.duration, \
-                 features.new_flag, future, future_table, github.enterprise and 4 more\n\
+                 features.new_flag, future, future_table, github.future and 4 more\n\
                  config-gpui.local.toml: layout.sidebar_gap is deprecated; use terminal.padding_x"
         )
     );

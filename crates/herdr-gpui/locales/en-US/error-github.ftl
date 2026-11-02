@@ -45,14 +45,16 @@ error-github-worker = { $kind ->
    *[other] GitHub { $worker } worker stopped.
 }
 
-## The [github] accounts config list. [github] and accounts are config names.
+## The [github] accounts and enterprise config lists. [github], accounts and enterprise are config names.
 
-error-github-accounts-duplicate-id = [github] accounts lists the id { $id } twice
+error-github-accounts-duplicate-id = [github] accounts and enterprise list the id { $id } twice
 error-github-accounts-id = [github] accounts id must be 32 lowercase hexadecimal digits
 error-github-accounts-not-a-list = [github] accounts must be a list of account tables
 # $owner is the name as written in the config, in quotes.
 error-github-accounts-owner = [github] accounts owner { $owner } is not a GitHub user or organization name
 error-github-accounts-random = Could not generate a GitHub account ID
+# $server is the host as written in the config, in quotes.
+error-github-accounts-server = [github] enterprise server { $server } is not a host name with an optional port
 error-github-accounts-too-many = [github] accounts may list at most { $limit } accounts
 
 ## The GitHub CLI (gh). `gh auth login` and `gh auth status` are commands.
@@ -76,7 +78,7 @@ error-github-pull-request-encoding = Invalid process text.
 error-github-pull-request-identity = PR identity does not match the repository and branch.
 error-github-pull-request-metadata = No repository metadata.
 error-github-pull-request-missing-worktree = No local worktree matches the daemon branch.
-error-github-pull-request-origin = PR lookup supports GitHub.com origins only.
+error-github-pull-request-origin = PR lookup supports GitHub.com and signed-in GitHub Enterprise Server origins only.
 # $kind is the step that failed. $operation is its English description,
 # shown for a step not listed here.
 error-github-pull-request-process = { $kind ->

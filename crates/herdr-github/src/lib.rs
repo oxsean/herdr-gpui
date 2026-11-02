@@ -23,6 +23,7 @@ pub mod pr_actions;
 pub mod pull_request;
 mod repository;
 mod routing;
+mod server;
 mod store;
 mod token;
 
@@ -33,17 +34,18 @@ mod test_executable;
 mod tests;
 
 pub use error::{AccountsError, Error, JsonError, Result};
-pub use repository::github_repo;
+pub use repository::{Repo, github_repo};
+pub use server::Server;
 pub use {
     auth::Auth,
     device::{Profile, Source, VERIFY_URL},
     http::{graphql, graphql_aliases, hidden_hint, mutation, rest},
     installation::{Access, Installation},
-    routing::Tokens,
+    routing::{ServerToken, Tokens},
     store::{Account, Note, Store, note as store_note, select as select_store},
 };
 
-use device::{Device, Reply, SETUP_MESSAGE, profile, profile_from, token_reply};
+use device::{Device, Reply, SETUP_MESSAGE, profile, profile_from, profile_on, token_reply};
 use store::{save, valid_token};
 
 /// Delete one account's saved credential, as signing it out does, for an
@@ -52,3 +54,7 @@ use store::{save, valid_token};
 pub fn forget(store: Store, account: &Account) -> Result<()> {
     save(None, store, account)
 }
+
+#[cfg(test)]
+#[path = "../../test-support/graphql_export.rs"]
+mod graphql_export;

@@ -30,23 +30,26 @@ pub(super) fn list(
     cooldown: &mut Option<Duration>,
 ) -> crate::Result<(Origin, Vec<Item>)> {
     let deadline = Instant::now() + TIMEOUT;
+    let enterprise = tokens.enterprise();
     let origin = Origin::from(match &target.host {
         crate::pull_request::Origin::Local => {
-            local_repository(&target.input, deadline, &cancelled)?
+            local_repository(&target.input, &enterprise, deadline, &cancelled)?
         }
         crate::pull_request::Origin::Ssh(host) => {
-            remote_repository(host, &target.input, deadline, &cancelled)?
+            remote_repository(host, &target.input, &enterprise, deadline, &cancelled)?
         }
     });
     // The account that reads the listed repository's owner, which is the
     // upstream owner in a fork checkout.
-    let token = tokens.for_owner(&origin.owner).clone();
+    let token = tokens
+        .for_owner(&origin.server, &origin.owner)
+        .ok_or(herdr_github::Error::Authentication)?;
     let timeout = deadline
         .checked_duration_since(Instant::now())
         .ok_or(herdr_github::pull_request::Error::Timeout)?;
     let response = crate::github::graphql(
         "repo_items",
-        &token,
+        token,
         QUERY,
         serde_json::json!({"owner": origin.owner, "repo": origin.repo, "count": LIMIT}),
         timeout,
@@ -101,4 +104,10 @@ pub(super) fn fetch_branch(
         details: crate::pull_request::clean(output.trim()),
     })
     .into())
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("repositoryItems", QUERY);
 }

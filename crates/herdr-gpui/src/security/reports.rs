@@ -51,7 +51,7 @@ pub(super) fn read(
     cancelled: impl Fn() -> bool,
 ) -> Result<Reports, Error> {
     let (owner, _) = name.split_once('/').ok_or(Error::Output)?;
-    let token = tokens.for_owner(owner);
+    let token = super::token(tokens, owner)?;
     let enabled = match crate::github::rest::<Reporting>(
         "security",
         token,

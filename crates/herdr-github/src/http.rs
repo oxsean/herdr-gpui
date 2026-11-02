@@ -2,7 +2,7 @@
 //! headers, the GraphQL call, and the account-wide rate-limit cooldown. Remote
 //! diagnostics stay bounded so a hostile response cannot flood the UI.
 
-use super::{Result, log};
+use super::{Result, Server, ServerToken, log};
 use crate::Error;
 use chrono::{DateTime, Utc};
 use herdr_updater::{quota_exhausted, rate_limit_reset};
@@ -17,11 +17,19 @@ use zeroize::Zeroizing;
 
 pub(super) const LIMIT: u64 = 2 * 1024 * 1024;
 
-pub(super) fn agent(timeout: Duration) -> ureq::Agent {
+/// An agent for requests to `server`. A GitHub Enterprise Server is
+/// verified against the system's certificates, because its certificate is
+/// often issued by the organization's own authority.
+pub(super) fn agent(server: &Server, timeout: Duration) -> ureq::Agent {
+    let roots = match server {
+        Server::GitHub => ureq::tls::RootCerts::WebPki,
+        Server::Enterprise(_) => ureq::tls::RootCerts::PlatformVerifier,
+    };
     ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
         .max_redirects(0)
         .http_status_as_error(false)
+        .tls_config(ureq::tls::TlsConfig::builder().root_certs(roots).build())
         .build()
         .into()
 }
@@ -76,7 +84,7 @@ pub(super) fn response<T: DeserializeOwned>(
 
 pub fn graphql(
     context: &'static str,
-    token: &SecretString,
+    token: &ServerToken,
     query: &str,
     variables: Value,
     timeout: Duration,
@@ -93,7 +101,7 @@ pub fn graphql(
         return Err(crate::pull_request::Error::Cancelled.into());
     }
     if let Some(errors) = result.get("errors") {
-        let kind = log::token_kind(token);
+        let kind = log::token_kind(&token.token);
         log::graphql(context, kind, &exchange, errors);
         if errors.as_array().is_some_and(|errors| {
             errors.iter().any(|error| {
@@ -116,7 +124,7 @@ pub fn graphql(
 /// error no alias claims, fails the whole request. Pull request lookups are
 /// its only caller, so failures are logged under their context.
 pub fn graphql_aliases(
-    token: &SecretString,
+    token: &ServerToken,
     query: &str,
     variables: Value,
     aliases: &[(String, String)],
@@ -132,7 +140,7 @@ pub fn graphql_aliases(
     if cancelled() {
         return Err(crate::pull_request::Error::Cancelled.into());
     }
-    let kind = log::token_kind(token);
+    let kind = log::token_kind(&token.token);
     if let Some(errors) = result.get("errors") {
         log::graphql("pull_request", kind, &exchange, errors);
     }
@@ -206,7 +214,7 @@ pub(super) fn split_aliases(
 /// user needs, and a generic failure would invite a blind retry.
 pub fn mutation(
     context: &'static str,
-    token: &SecretString,
+    token: &ServerToken,
     query: &str,
     variables: Value,
     timeout: Duration,
@@ -215,21 +223,21 @@ pub fn mutation(
     let repository = requested_repository(&variables);
     let (result, exchange) = post(token, query, variables, Instant::now() + timeout, &mut None)?;
     if let Some(errors) = result.get("errors") {
-        let kind = log::token_kind(token);
+        let kind = log::token_kind(&token.token);
         log::graphql(context, kind, &exchange, errors);
         return Err(query_error(errors, repository, kind, exchange.reset));
     }
     Ok(result)
 }
 
-/// A REST read of `path` under `https://api.github.com`, such as
+/// A REST read of `path` under the token's server's API root, such as
 /// `/repos/OWNER/REPO/security-advisories`, through the same bounded reader
 /// and typed refusals as GraphQL. Callers build `path` from names they have
 /// validated; nothing here escapes it. The answer is read straight into
 /// `T`, so fields `T` leaves out are skipped rather than held.
 pub fn rest<T: DeserializeOwned>(
     context: &'static str,
-    token: &SecretString,
+    token: &ServerToken,
     path: &str,
     timeout: Duration,
     cancelled: impl Fn() -> bool,
@@ -237,12 +245,12 @@ pub fn rest<T: DeserializeOwned>(
     if cancelled() {
         return Err(crate::pull_request::Error::Cancelled.into());
     }
-    let reply = agent(timeout)
-        .get(format!("https://api.github.com{path}"))
+    let reply = agent(&token.server, timeout)
+        .get(token.server.rest_url(path))
         .header("User-Agent", "Herdr-GPUI")
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
-        .header("Authorization", authorization(token)?)
+        .header("Authorization", authorization(&token.token)?)
         .call()
         .map_err(log::network(context))?;
     if cancelled() {
@@ -316,25 +324,23 @@ pub fn fake_graphql(token: &str, url: String) {
     }
 }
 
-fn graphql_url(token: &SecretString) -> String {
+fn graphql_url(token: &ServerToken) -> String {
     #[cfg(any(test, feature = "test-support"))]
     if let Some((_, url)) = FAKE_GRAPHQL.lock().ok().and_then(|fakes| {
         fakes
             .iter()
-            .find(|(fake, _)| fake == token.expose_secret())
+            .find(|(fake, _)| fake == token.token.expose_secret())
             .cloned()
     }) {
         return url;
     }
-    #[cfg(not(any(test, feature = "test-support")))]
-    let _ = token;
-    "https://api.github.com/graphql".to_owned()
+    token.server.graphql_url()
 }
 
 /// One GraphQL POST, its bounded JSON body, and the headers that explain a
 /// failure GraphQL reports with a 200.
 fn post(
-    token: &SecretString,
+    token: &ServerToken,
     query: &str,
     variables: Value,
     deadline: Instant,
@@ -344,12 +350,12 @@ fn post(
     let timeout = deadline
         .checked_duration_since(Instant::now())
         .ok_or(crate::pull_request::Error::Timeout)?;
-    let reply = agent(timeout)
+    let reply = agent(&token.server, timeout)
         .post(graphql_url(token))
         .header("User-Agent", "Herdr-GPUI")
         .header("Accept", "application/vnd.github+json")
         .header("Content-Type", "application/json")
-        .header("Authorization", authorization(token)?)
+        .header("Authorization", authorization(&token.token)?)
         .send(body.as_bytes())
         .map_err(log::network("graphql"))?;
     *cooldown = pr_cooldown(
@@ -441,7 +447,7 @@ pub(super) fn oauth<T: DeserializeOwned>(
     // zeroized by this module. Never log request fields or response bodies.
     response(
         path,
-        agent(timeout)
+        agent(&Server::GitHub, timeout)
             .post(format!("https://github.com/login/{path}"))
             .header("User-Agent", "Herdr-GPUI")
             .header("Accept", "application/json")

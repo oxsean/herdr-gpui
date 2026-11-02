@@ -97,7 +97,7 @@ fn account_icon_keeps_the_same_bounds_when_signed_out_failed_or_connected(cx: &m
 }
 
 #[gpui::test]
-fn profile_slot_bounds_and_context_menu_do_not_start_auth(cx: &mut TestAppContext) {
+fn profile_slot_bounds_and_clicks_do_not_start_auth(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(header_window);
     for (width, height) in [(1200., 780.), (640., 400.), (360., 400.)] {
         cx.simulate_resize(size(px(width), px(height)));
@@ -127,6 +127,18 @@ fn profile_slot_bounds_and_context_menu_do_not_start_auth(cx: &mut TestAppContex
         );
     }
     let bounds = cx.debug_bounds("titlebar-avatar").unwrap();
+    let opened_without_auth = |cx: &mut gpui::VisualTestContext| {
+        cx.update(|window, cx| {
+            view.update(cx, |view, cx| {
+                assert!(view.menu.page == Some(Page::GitHub));
+                assert!(!view.menu.github.busy());
+                assert!(!view.menu.github.loading_profile());
+                view.dismiss_menu(window, cx);
+            })
+        });
+    };
+    cx.simulate_click(bounds.center(), Modifiers::default());
+    opened_without_auth(cx);
     cx.simulate_event(MouseDownEvent {
         button: MouseButton::Right,
         position: bounds.center(),
@@ -134,17 +146,11 @@ fn profile_slot_bounds_and_context_menu_do_not_start_auth(cx: &mut TestAppContex
         click_count: 1,
         first_mouse: false,
     });
-    cx.update(|_, cx| {
-        let view = view.read(cx);
-        assert!(view.menu.page == Some(Page::GitHub));
-        assert!(!view.menu.github.busy());
-        assert!(!view.menu.github.loading_profile());
-    });
+    opened_without_auth(cx);
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {
-            view.dismiss_menu(window, cx);
             view.menu.github = crate::github::Auth::connected_fixture();
-            view.open_profile(true, window, cx);
+            view.open_profile(window, cx);
             assert!(view.menu.github.connected());
             assert!(!view.menu.github.busy());
         })

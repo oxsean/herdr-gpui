@@ -6,7 +6,7 @@ use crate::{Profile, Tokens};
 fn both(owners: &[String]) -> Tokens {
     let main = Profile::fixture("fixture", Arc::new("fixture".into()), &[]);
     let emu = Profile::fixture("emu", Arc::new("emu".into()), &[]);
-    Tokens::new(&main, [(&emu, owners)])
+    Tokens::new(Some(&main), [(&emu, owners)])
 }
 
 /// A peer over both accounts, asking for one checkout at a time.

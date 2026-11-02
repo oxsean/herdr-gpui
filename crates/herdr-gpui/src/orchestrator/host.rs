@@ -112,10 +112,11 @@ impl HerdrWindow {
         let profile =
             host.and_then(|auth| auth.profile.as_ref())
                 .or(self.menu.github.profile.as_ref());
-        match profile {
-            Some(profile) => (Some(self.tokens_over(profile)), Some(profile.login.clone())),
-            None => (None, None),
-        }
+        let tokens = self.tokens_over(profile);
+        (
+            (!tokens.is_empty()).then_some(tokens),
+            profile.map(|profile| profile.login.clone()),
+        )
     }
 
     /// The sections' view, made if the window has none yet.

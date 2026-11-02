@@ -313,3 +313,9 @@ fn status_context(state: Option<&str>) -> CheckState {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("pullRequestReviews", QUERY);
+}

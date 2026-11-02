@@ -86,6 +86,12 @@ impl Localize for AccountsError {
                 fl!("error-github-accounts-owner", owner = format!("{owner:?}"))
             }
             Self::Random(_) => fl!("error-github-accounts-random"),
+            Self::Server(server) => {
+                fl!(
+                    "error-github-accounts-server",
+                    server = format!("{server:?}")
+                )
+            }
         }
     }
 }

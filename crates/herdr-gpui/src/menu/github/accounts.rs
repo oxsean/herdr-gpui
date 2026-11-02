@@ -6,16 +6,19 @@
 use crate::i18n::fl;
 use crate::{
     HerdrWindow,
-    config::{Config, GitHubAccount},
+    config::{Config, GitHubAccount, GitHubConfig},
     github::{Account, Auth, Profile, Tokens},
     search_input::SearchInput,
 };
 use gpui::{prelude::*, *};
+use herdr_github::Server;
 use secrecy::SecretString;
 
-/// An additional account's sign-in and the owners its config entry lists.
+/// An additional or GitHub Enterprise Server account's sign-in and the
+/// owners its config entry lists.
 pub(crate) struct AdditionalAccount {
     pub(crate) id: String,
+    pub(crate) server: Server,
     /// Owners read besides the account's own login and organizations.
     pub(crate) owners: Vec<String>,
     pub(crate) auth: Auth,
@@ -50,25 +53,34 @@ impl HerdrWindow {
     /// gone from the config is dropped from memory; removing it from the
     /// GitHub page deletes its saved credential first.
     pub(crate) fn sync_github_accounts(&mut self) {
-        let configured = &self.config.github.accounts;
+        let configured = configured(&self.config.github);
         let accounts = &mut self.menu.github_accounts;
-        accounts.retain(|account| configured.iter().any(|entry| entry.id == account.id));
-        for entry in configured {
+        accounts.retain(|account| {
+            configured
+                .iter()
+                .any(|entry| entry.id == account.id && entry.server == account.server)
+        });
+        for entry in &configured {
             match accounts.iter_mut().find(|account| account.id == entry.id) {
                 Some(account) => {
-                    if account.owners != entry.owners {
-                        account.owners.clone_from(&entry.owners);
+                    if &account.owners != entry.owners {
+                        account.owners.clone_from(entry.owners);
                     }
                 }
                 // Headless windows never touch saved credentials.
                 None if self.avatars.is_some() => {
-                    let Some(kind) = Account::additional(&entry.id) else {
+                    let kind = match &entry.server {
+                        Server::GitHub => Account::additional(entry.id),
+                        server => Account::enterprise(server, entry.id),
+                    };
+                    let Some(kind) = kind else {
                         continue;
                     };
                     let mut auth = Auth::for_account(kind);
                     auth.initialize(&self.config.github);
                     accounts.push(AdditionalAccount {
-                        id: entry.id.clone(),
+                        id: entry.id.to_owned(),
+                        server: entry.server.clone(),
                         owners: entry.owners.clone(),
                         auth,
                     });
@@ -78,9 +90,9 @@ impl HerdrWindow {
         }
         if accounts
             .windows(2)
-            .any(|pair| position(configured, &pair[0].id) > position(configured, &pair[1].id))
+            .any(|pair| position(&configured, &pair[0].id) > position(&configured, &pair[1].id))
         {
-            accounts.sort_by_key(|account| position(configured, &account.id));
+            accounts.sort_by_key(|account| position(&configured, &account.id));
         }
         // An account just added is shown once its sign-in exists.
         if let Some(id) = &self.menu.github_adding
@@ -98,6 +110,13 @@ impl HerdrWindow {
         }
     }
 
+    /// The GitHub Enterprise Server of the account the GitHub page shows.
+    pub(super) fn github_enterprise_shown(&self) -> Option<&Server> {
+        self.selected_github_account()
+            .map(|account| &account.server)
+            .filter(|server| server.is_enterprise())
+    }
+
     /// The additional account the GitHub page shows.
     pub(super) fn selected_github_account(&self) -> Option<&AdditionalAccount> {
         let id = self.menu.github_account.as_ref()?;
@@ -110,20 +129,28 @@ impl HerdrWindow {
     /// The tokens pull requests on the selected device are read with: its
     /// account (see `pr_profile`) and every signed-in additional account.
     pub(crate) fn pr_tokens(&self) -> Option<Tokens> {
-        self.pr_profile().map(|main| self.tokens_over(main))
+        Some(self.tokens_over(self.pr_profile())).filter(|tokens| !tokens.is_empty())
+    }
+
+    /// Whether some account on the selected device reads pull requests: its
+    /// own or the main sign-in, or any additional or Enterprise account.
+    pub(crate) fn pr_signed_in(&self) -> bool {
+        self.pr_profile().is_some()
+            || self
+                .menu
+                .github_accounts
+                .iter()
+                .any(|account| account.auth.connected())
     }
 
     /// The same with this computer's main account, for work that reads only
     /// local checkouts.
     pub(crate) fn main_tokens(&self) -> Option<Tokens> {
-        self.menu
-            .github
-            .profile
-            .as_ref()
-            .map(|main| self.tokens_over(main))
+        Some(self.tokens_over(self.menu.github.profile.as_ref()))
+            .filter(|tokens| !tokens.is_empty())
     }
 
-    pub(crate) fn tokens_over(&self, main: &Profile) -> Tokens {
+    pub(crate) fn tokens_over(&self, main: Option<&Profile>) -> Tokens {
         Tokens::new(
             main,
             self.menu.github_accounts.iter().filter_map(|account| {
@@ -322,6 +349,16 @@ impl HerdrWindow {
                 .as_ref()
                 .map_or_else(|| fallback, |profile| format!("@{}", profile.login))
         };
+        let label = |account: &AdditionalAccount| {
+            let login = login(&account.auth, fl!("github-menu-new-account"));
+            match &account.server {
+                Server::GitHub => login,
+                server => {
+                    let servers = self.menu.github_accounts.iter().map(|other| &other.server);
+                    format!("{login} · {}", server.short_name(servers)) // i18n: data
+                }
+            }
+        };
         let mut strip = div()
             .debug_selector(|| "github-accounts".into())
             .flex()
@@ -346,7 +383,7 @@ impl HerdrWindow {
             strip = strip.child(
                 chip(
                     format!("github-account-{index}").into(),
-                    login(&account.auth, fl!("github-menu-new-account")),
+                    label(account),
                     selected,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -377,6 +414,12 @@ impl HerdrWindow {
     /// What the shown additional account is for, and which owners it reads.
     pub(super) fn github_account_note(&self) -> Option<String> {
         let account = self.selected_github_account()?;
+        if account.server.is_enterprise() {
+            return Some(fl!(
+                "github-menu-enterprise-note",
+                server = account.server.to_string()
+            ));
+        }
         let covered = account.covered();
         Some(if covered.is_empty() {
             fl!("github-menu-account-note")
@@ -397,16 +440,44 @@ impl HerdrWindow {
                 .gap(px(6.))
                 .child(fl!("github-menu-token-label"))
                 .child(input)
-                .child(
-                    div()
-                        .text_color(rgb(self.theme.muted))
-                        .child(fl!("github-menu-token-help")),
-                ),
+                .child(div().text_color(rgb(self.theme.muted)).child(
+                    match self.github_enterprise_shown() {
+                        Some(server) => fl!(
+                            "github-menu-enterprise-token-help",
+                            server = server.to_string()
+                        ),
+                        None => fl!("github-menu-token-help"),
+                    },
+                )),
         )
     }
 }
 
-fn position(configured: &[GitHubAccount], id: &str) -> usize {
+/// A config entry of either table: GitHub.com accounts first, then GitHub
+/// Enterprise Server ones, each in config order.
+struct Entry<'a> {
+    id: &'a str,
+    server: Server,
+    owners: &'a Vec<String>,
+}
+
+fn configured(config: &GitHubConfig) -> Vec<Entry<'_>> {
+    let github = config.accounts.iter().map(|entry| Entry {
+        id: &entry.id,
+        server: Server::GitHub,
+        owners: &entry.owners,
+    });
+    let enterprise = config.enterprise.iter().filter_map(|entry| {
+        Some(Entry {
+            id: &entry.id,
+            server: entry.server()?,
+            owners: &entry.owners,
+        })
+    });
+    github.chain(enterprise).collect()
+}
+
+fn position(configured: &[Entry<'_>], id: &str) -> usize {
     configured
         .iter()
         .position(|entry| entry.id == id)

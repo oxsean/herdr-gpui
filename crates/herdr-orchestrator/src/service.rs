@@ -14,9 +14,10 @@ use super::{
     ssh_slots,
 };
 use crate::cache::{Cache, Kind};
+use agents::{agents, installed};
 use chrono::{DateTime, Utc};
 use herdr_client::ConnectTarget;
-use herdr_github::Tokens;
+use herdr_github::{Server, Tokens};
 use herdr_remote::teleport::{AgentKind, Host};
 use sources::{recognize, statuses};
 use std::{
@@ -30,6 +31,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod agents;
 mod gitlab_source;
 mod sources;
 
@@ -433,12 +435,17 @@ impl Worker {
         let Some((owner, repo)) = remote.source.repository.split_once('/') else {
             return;
         };
+        let Some(token) = Server::of_host(&remote.source.host, &token.enterprise())
+            .and_then(|server| token.for_owner(&server, owner).cloned())
+        else {
+            return;
+        };
         let cancelled = self.cancelled.clone();
         let result = herdr_github::pull_request::by_number(
             owner,
             repo,
             number,
-            token.for_owner(owner),
+            &token,
             || cancelled.load(Ordering::Relaxed),
             &mut self.cooldown,
         );
@@ -533,7 +540,7 @@ impl Worker {
                 return Err(error);
             }
         };
-        recognize(&mut info, gitlab::cli_hosts::read);
+        recognize(&mut info, &self.enterprise(), gitlab::cli_hosts::read);
         if std::mem::take(&mut self.unreached) {
             self.snapshot.error = None;
         }
@@ -614,7 +621,7 @@ impl Worker {
         }
         let store = Store::open(&path)?;
         self.snapshot.access = Some(store.access());
-        self.snapshot.sources = statuses(&info);
+        self.snapshot.sources = statuses(&info, &self.enterprise());
         self.site = Some(Site {
             host: host.clone(),
             target: self.request.target.clone(),
@@ -702,13 +709,20 @@ impl Worker {
                 Err(error) => tracing::debug!(%error, "Cannot read the branches"),
             }
         }
-        for (key, supported) in sources(&info) {
+        let enterprise = token.map(Tokens::enterprise).unwrap_or_default();
+        for (key, supported) in sources(&info, &enterprise) {
             if self.cancelled() {
                 return;
             }
+            // Signing in to or out of a GitHub Enterprise Server changes
+            // whether its sources are read.
+            if !supported {
+                self.set_state(&key, SyncState::Unsupported);
+                continue;
+            }
             let now = Instant::now();
             self.retry.retain(|(_, until)| *until > now);
-            if !supported || self.retry.iter().any(|(waiting, _)| *waiting == key) {
+            if self.retry.iter().any(|(waiting, _)| *waiting == key) {
                 continue;
             }
             self.set_syncing(&key);
@@ -789,7 +803,11 @@ impl Worker {
                     .repository
                     .split_once('/')
                     .map_or(key.repository.as_str(), |(owner, _)| owner);
-                let token = tokens.for_owner(owner);
+                let Some(token) = Server::of_host(&key.host, &tokens.enterprise())
+                    .and_then(|server| tokens.for_owner(&server, owner))
+                else {
+                    return Ok(SyncState::SignIn);
+                };
                 let previous = store.checkpoint(key)?;
                 // What the last complete sync stored, for reading only the
                 // changes since; a read-only store keeps none.
@@ -917,10 +935,20 @@ impl Worker {
         let Some(mut info) = self.snapshot.repo.clone() else {
             return;
         };
-        if recognize(&mut info, cli) {
-            self.snapshot.sources = statuses(&info);
+        let enterprise = self.enterprise();
+        if recognize(&mut info, &enterprise, cli) {
+            self.snapshot.sources = statuses(&info, &enterprise);
             self.snapshot.repo = Some(info);
         }
+    }
+
+    /// The GitHub Enterprise Servers the window's accounts signed in to.
+    fn enterprise(&self) -> Vec<Server> {
+        self.request
+            .token
+            .as_ref()
+            .map(Tokens::enterprise)
+            .unwrap_or_default()
     }
 
     fn set_state(&mut self, key: &SourceKey, state: SyncState) {
@@ -955,22 +983,4 @@ fn push(notices: &Mutex<VecDeque<Notice>>, notice: Notice) {
         }
         notices.push_back(notice);
     }
-}
-
-/// The agents installed on `host`, in [`AgentKind::ALL`] order.
-fn installed(host: Option<&Host>, cancelled: &AtomicBool) -> Result<Vec<AgentKind>> {
-    let binaries = AgentKind::ALL.map(AgentKind::binary);
-    let found = host
-        .ok_or(Error::UnsupportedHost)?
-        .installed_programs(&binaries, cancelled)
-        .map_err(super::error::script("Discovering installed agents"))?;
-    Ok(agents(&found))
-}
-
-/// The agents whose binaries are among `found`.
-fn agents(found: &[String]) -> Vec<AgentKind> {
-    AgentKind::ALL
-        .into_iter()
-        .filter(|kind| found.iter().any(|binary| binary == kind.binary()))
-        .collect()
 }

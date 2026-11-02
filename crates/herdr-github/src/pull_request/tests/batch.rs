@@ -12,6 +12,7 @@ fn target(owner: &str, ask: Ask) -> (Input, Target) {
             branch: "local".into(),
         },
         Target {
+            server: crate::Server::GitHub,
             owner: owner.into(),
             repo: "project".into(),
             ask,

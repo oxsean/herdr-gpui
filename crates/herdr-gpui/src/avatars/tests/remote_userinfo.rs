@@ -1,5 +1,9 @@
 use super::*;
 
+fn slug(remote: &str) -> Option<(String, String)> {
+    github_repo(remote, &[]).map(|repo| (repo.owner, repo.name))
+}
+
 #[test]
 fn http_remotes_with_userinfo_resolve_to_the_owner() {
     for scheme in ["https://", "http://"] {
@@ -13,7 +17,7 @@ fn http_remotes_with_userinfo_resolve_to_the_owner() {
             for repo in ["repo", "repo.git"] {
                 let remote = format!("{scheme}{userinfo}github.com/Some-Owner/{repo}");
                 assert_eq!(
-                    github_repo(&remote),
+                    slug(&remote),
                     Some(("some-owner".to_owned(), "repo".to_owned())),
                     "{remote}"
                 );
@@ -29,7 +33,7 @@ fn ssh_remotes_are_unchanged() {
         "ssh://git@github.com/Some-Owner/repo.git",
     ] {
         assert_eq!(
-            github_repo(remote),
+            slug(remote),
             Some(("some-owner".to_owned(), "repo".to_owned())),
             "{remote}"
         );
@@ -57,6 +61,6 @@ fn userinfo_never_moves_the_host_off_github() {
         "https://user@github.com/owner/repo/extra",
         "https://user@github.com/owner/repo?query",
     ] {
-        assert_eq!(github_repo(remote), None, "{remote}");
+        assert_eq!(slug(remote), None, "{remote}");
     }
 }

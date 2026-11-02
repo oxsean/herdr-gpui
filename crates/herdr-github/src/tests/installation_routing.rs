@@ -39,12 +39,13 @@ fn private_installations_route_without_public_membership_and_deduplicate_owners(
     let mut additional = Profile::fixture("other", Arc::new("ghu_app-token".into()), &[]);
     additional.organizations = coverage(Some(memberships), &installed);
     assert_eq!(additional.organizations, Some(vec!["private-org".into()]));
-    let tokens = crate::Tokens::new(&main, [(&additional, &[][..])]);
-    assert_eq!(
-        tokens.for_owner("Private-Org").expose_secret(),
-        "ghu_app-token"
-    );
-    assert_eq!(tokens.for_owner("personal").expose_secret(), "main-token");
+    let tokens = crate::Tokens::new(Some(&main), [(&additional, &[][..])]);
+    let read = |owner| {
+        let token = tokens.for_owner(&crate::Server::GitHub, owner).unwrap();
+        token.token.expose_secret().to_owned()
+    };
+    assert_eq!(read("Private-Org"), "ghu_app-token");
+    assert_eq!(read("personal"), "main-token");
 
     assert_eq!(
         coverage(

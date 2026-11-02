@@ -148,7 +148,7 @@ fn bounded_http_parsing_and_safe_errors() {
     assert!(
         graphql(
             "test",
-            &"fixture".into(),
+            &crate::ServerToken::github(Arc::new("fixture".into())),
             "",
             Value::Null,
             Duration::from_secs(1),

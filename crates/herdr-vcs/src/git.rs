@@ -14,7 +14,6 @@ use herdr_github::{
     Tokens,
     pull_request::{Input, base_repository, clean, local_checkout, run, run_bytes},
 };
-use secrecy::SecretString;
 use std::{
     collections::VecDeque,
     process::Command,
@@ -710,9 +709,14 @@ fn create_pull_request(
     // A fork checkout opens its pull request against `upstream`, from the
     // branch pushed to its own `origin` below. The fork's owner opens it, so
     // that owner's account sends the mutation.
-    let base = base_repository(checkout, deadline, cancelled)?;
+    let base = base_repository(checkout, &tokens.enterprise(), deadline, cancelled)?;
     let head = base.head(branch)?;
-    let token: &SecretString = tokens.for_owner(base.fork_owner.as_deref().unwrap_or(&base.owner));
+    let token = tokens
+        .for_owner(
+            &base.server,
+            base.fork_owner.as_deref().unwrap_or(&base.owner),
+        )
+        .ok_or(herdr_github::Error::Authentication)?;
     let title = clean(&git(
         checkout,
         &["log", "-1", "--pretty=format:%s"],
@@ -770,14 +774,20 @@ fn create_pull_request(
         cancelled,
         &mut cooldown,
     )?;
-    parse_created(&created, &base.owner, &base.repo)
+    parse_created(&created, &base.server, &base.owner, &base.repo)
 }
 
-fn parse_created(response: &serde_json::Value, owner: &str, repo: &str) -> crate::Result<Outcome> {
+fn parse_created(
+    response: &serde_json::Value,
+    server: &herdr_github::Server,
+    owner: &str,
+    repo: &str,
+) -> crate::Result<Outcome> {
     let pr = &response["data"]["createPullRequest"]["pullRequest"];
     let number = pr["number"].as_u64().filter(|number| *number > 0);
     let url = pr["url"].as_str().unwrap_or_default();
-    let expected = number.map(|number| format!("https://github.com/{owner}/{repo}/pull/{number}"));
+    let expected =
+        number.map(|number| format!("{}/{owner}/{repo}/pull/{number}", server.web_url()));
     if expected.as_deref() != Some(url) {
         return Err(herdr_github::Error::from(herdr_github::pull_request::Error::Identity).into());
     }
@@ -880,3 +890,10 @@ pub fn close_status(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("repositoryForPullRequest", REPOSITORY_QUERY);
+    crate::graphql_export::export("createPullRequest", CREATE_MUTATION);
+}

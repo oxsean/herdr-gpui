@@ -136,7 +136,7 @@ impl HerdrWindow {
         self.menu.reset();
         self.menu.anchor = anchor;
         self.menu.page = Some(Page::Git);
-        if self.menu.github.connected()
+        if self.main_tokens().is_some()
             && let Some(input) = self.git_input()
         {
             self.sync_pr_scope();
@@ -159,16 +159,12 @@ impl HerdrWindow {
             origin: crate::pull_request::Origin::Local,
             login: self.main_tokens()?.key(),
         };
-        self.menu
-            .github
-            .connected()
-            .then(|| self.menu.pr_cache.peek_input(&view, input))
-            .flatten()
+        self.menu.pr_cache.peek_input(&view, input)
     }
 
     /// A GitHub lookup for the focused branch is in flight or about to be.
     fn git_pull_request_loading(&self) -> bool {
-        self.menu.github.connected()
+        self.main_tokens().is_some()
             && self
                 .git
                 .tracked()

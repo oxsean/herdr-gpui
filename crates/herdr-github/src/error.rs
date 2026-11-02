@@ -107,12 +107,14 @@ pub enum AccountsError {
     TooMany(usize),
     #[error("[github] accounts id must be 32 lowercase hexadecimal digits")]
     Id,
-    #[error("[github] accounts lists the id {0} twice")]
+    #[error("[github] accounts and enterprise list the id {0} twice")]
     DuplicateId(String),
     #[error("[github] accounts must be a list of account tables")]
     NotAList,
     #[error("[github] accounts owner {0:?} is not a GitHub user or organization name")]
     Owner(String),
+    #[error("[github] enterprise server {0:?} is not a host name with an optional port")]
+    Server(String),
     #[error("Could not generate a GitHub account ID")]
     Random(#[source] getrandom::Error),
 }

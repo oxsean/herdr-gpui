@@ -10,6 +10,7 @@ fn the_github_cli_is_read_outside_the_credential_lock() {
         });
         assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap());
         Ok(Profile {
+            server: Server::GitHub,
             login: "cli-user".into(),
             avatar_url: String::new(),
             token: std::sync::Arc::new("gho_fixture".into()),

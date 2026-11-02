@@ -89,16 +89,18 @@ impl Repo {
         {
             return None;
         }
-        let owner = remote.map(|remote| {
-            let repository = remote.source.repository.as_str();
-            repository
-                .split_once('/')
-                .map_or(repository, |(owner, _)| owner)
-        });
-        match (&self.request.token, owner) {
-            (Some(tokens), Some(owner)) => Some(tokens.login_for(owner)),
-            _ => self.login.as_deref(),
-        }
+        let Some(tokens) = &self.request.token else {
+            return self.login.as_deref();
+        };
+        let Some(remote) = remote else {
+            return self.login.as_deref();
+        };
+        let repository = remote.source.repository.as_str();
+        let owner = repository
+            .split_once('/')
+            .map_or(repository, |(owner, _)| owner);
+        let server = herdr_github::Server::of_host(&remote.source.host, &tokens.enterprise())?;
+        tokens.login_for(&server, owner)
     }
 
     /// Whether its folder turned out not to be in a Git repository: a

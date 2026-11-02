@@ -5,7 +5,10 @@ use crate::security::fetch::{FULLY_READ, Found, readable};
 use secrecy::ExposeSecret;
 
 fn tokens(login: &str, token: &str) -> Tokens {
-    Tokens::new(&Profile::fixture(login, Arc::new(token.into()), &[]), [])
+    Tokens::new(
+        Some(&Profile::fixture(login, Arc::new(token.into()), &[])),
+        [],
+    )
 }
 
 #[test]
@@ -37,7 +40,15 @@ fn another_hosts_account_is_kept_to_try_but_the_same_token_once() {
     found.add(("server", &other));
     let hosts: Vec<&str> = found.accounts.iter().map(|(host, _)| *host).collect();
     assert_eq!(hosts, ["Local", "server"]);
-    assert_eq!(found.accounts[1].1.for_owner("a").expose_secret(), "second");
+    assert_eq!(
+        found.accounts[1]
+            .1
+            .for_owner(&herdr_github::Server::GitHub, "a")
+            .unwrap()
+            .token
+            .expose_secret(),
+        "second"
+    );
 }
 
 #[gpui::test]

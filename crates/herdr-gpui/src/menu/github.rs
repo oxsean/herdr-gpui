@@ -9,6 +9,7 @@ use gpui::{prelude::*, *};
 use herdr_client::ConnectTarget;
 
 mod accounts;
+mod enterprise;
 mod installation;
 pub(crate) use accounts::AdditionalAccount;
 
@@ -25,6 +26,10 @@ pub(super) enum Action {
     Token,
     /// Add an account read for the repositories it owns.
     Add,
+    /// Show the field for a GitHub Enterprise Server account's server.
+    AddEnterprise,
+    SubmitServer,
+    CancelServer,
     SubmitToken,
     CancelToken,
     /// Open GitHub where the App is installed or its permissions approved.
@@ -42,6 +47,9 @@ impl Action {
             Self::Start => "github-start",
             Self::Token => "github-token-open",
             Self::Add => "github-account-add-action",
+            Self::AddEnterprise => "github-enterprise-add-action",
+            Self::SubmitServer => "github-server-submit",
+            Self::CancelServer => "github-server-cancel",
             Self::SubmitToken => "github-token-submit",
             Self::CancelToken => "github-token-cancel",
             Self::Approve => "github-approve",
@@ -220,13 +228,20 @@ impl HerdrWindow {
         if self.menu.github_token.is_some() {
             return vec![Action::SubmitToken, Action::CancelToken, Action::Close];
         }
+        if self.menu.github_server.is_some() {
+            return vec![Action::SubmitServer, Action::CancelServer, Action::Close];
+        }
         if auth.code().is_some() {
             actions.extend([Action::Copy, Action::Open]);
         } else if !auth.busy() && !auth.loading_profile() && !auth.connected() {
-            if self.github_host().is_none() && auth.github_cli_available() {
-                actions.push(Action::GitHubCli);
+            if self.github_enterprise_shown().is_some() {
+                actions.push(Action::Token);
+            } else {
+                if self.github_host().is_none() && auth.github_cli_available() {
+                    actions.push(Action::GitHubCli);
+                }
+                actions.extend([Action::Start, Action::Token]);
             }
-            actions.extend([Action::Start, Action::Token]);
         }
         if auth.connected() && self.github_attention().is_some_and(|a| !a.links.is_empty()) {
             actions.push(Action::Approve);
@@ -244,6 +259,15 @@ impl HerdrWindow {
             && self.menu.github_accounts.len() < crate::config::MAX_ACCOUNTS
         {
             actions.push(Action::Add);
+        }
+        // An Enterprise account needs no GitHub.com sign-in beside it.
+        if self.menu.github_account.is_none()
+            && auth.code().is_none()
+            && !auth.busy()
+            && !auth.loading_profile()
+            && self.can_add_enterprise_account()
+        {
+            actions.push(Action::AddEnterprise);
         }
         actions.push(Action::Close);
         actions
@@ -264,6 +288,12 @@ impl HerdrWindow {
             Action::Start => self.start_github(),
             Action::Token => self.open_github_token(window, cx),
             Action::Add => self.add_github_account(cx),
+            Action::AddEnterprise => self.open_github_server(window, cx),
+            Action::SubmitServer => self.submit_github_server(window, cx),
+            Action::CancelServer => {
+                self.close_github_server();
+                window.focus(&self.menu.focus, cx);
+            }
             Action::Approve => self.open_github_attention(cx),
             Action::SubmitToken => self.submit_github_token(window, cx),
             Action::CancelToken => {
@@ -291,8 +321,12 @@ impl HerdrWindow {
     ) {
         let key = event.keystroke.key.as_str();
         let modifiers = event.keystroke.modifiers;
-        // The token field edits itself; only Escape and Enter are the page's.
-        if let Some(input) = &self.menu.github_token
+        // A field edits itself; only Escape and Enter are the page's.
+        if let Some(input) = self
+            .menu
+            .github_token
+            .as_ref()
+            .or(self.menu.github_server.as_ref())
             && (input.read(cx).is_composing() || !matches!(key, "escape" | "enter"))
         {
             return;
@@ -329,6 +363,8 @@ impl HerdrWindow {
             let action = match key {
                 "escape" if self.menu.github_token.is_some() => Some(Action::CancelToken),
                 "enter" if self.menu.github_token.is_some() => Some(Action::SubmitToken),
+                "escape" if self.menu.github_server.is_some() => Some(Action::CancelServer),
+                "enter" if self.menu.github_server.is_some() => Some(Action::SubmitServer),
                 "escape" => Some(Action::Close),
                 "a" => {
                     if self.can_add_github_account() {
@@ -341,6 +377,7 @@ impl HerdrWindow {
                     None
                 }
                 "t" => Some(Action::Token),
+                "e" => Some(Action::AddEnterprise),
                 "r" => Some(Action::Approve),
                 "c" => {
                     if self.github_auth().busy() {
@@ -382,11 +419,17 @@ impl HerdrWindow {
         let theme = &self.theme;
         // The GitHub CLI's sign-in, when offered, is the one-click choice.
         let primary = match action {
-            Action::Open | Action::GitHubCli | Action::SubmitToken | Action::Approve => true,
+            Action::Open
+            | Action::GitHubCli
+            | Action::SubmitToken
+            | Action::SubmitServer
+            | Action::Approve => true,
             Action::Start => !self.github_actions().contains(&Action::GitHubCli),
             Action::Copy
             | Action::Token
             | Action::Add
+            | Action::AddEnterprise
+            | Action::CancelServer
             | Action::CancelToken
             | Action::SignOut
             | Action::Close => false,
@@ -578,13 +621,18 @@ impl HerdrWindow {
                 fl!("github-menu-checking")
             } else if auth.connected() {
                 fl!("github-menu-ready")
+            } else if self.github_enterprise_shown().is_some() {
+                fl!("github-menu-enterprise-sign-in")
             } else if host.is_none() && !additional && auth.github_cli_available() {
                 fl!("github-menu-cli-available")
             } else {
                 fl!("github-menu-sign-in-note")
             }
         });
-        if let Some(field) = self.render_github_token() {
+        if let Some(field) = self
+            .render_github_token()
+            .or_else(|| self.render_github_server())
+        {
             body = body.child(field);
         } else if !auth.connected() || auth.failed {
             body = body.child(
@@ -663,6 +711,9 @@ impl HerdrWindow {
                 Action::Start => fl!("github-menu-sign-in"),
                 Action::Token => fl!("github-menu-use-token"),
                 Action::Add => fl!("github-menu-add-account"),
+                Action::AddEnterprise => fl!("github-menu-add-enterprise"),
+                Action::SubmitServer => fl!("github-menu-continue"),
+                Action::CancelServer => fl!("github-menu-cancel-token"),
                 Action::SubmitToken => fl!("github-menu-save-token"),
                 Action::CancelToken => fl!("github-menu-cancel-token"),
                 Action::SignOut if additional => fl!("github-menu-remove-account"),

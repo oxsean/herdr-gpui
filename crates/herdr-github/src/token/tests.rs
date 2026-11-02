@@ -15,6 +15,7 @@ fn profile(token: Arc<SecretString>) -> Result<Profile> {
         return Err(Error::Authentication);
     }
     Ok(Profile {
+        server: Default::default(),
         login: "fixture".into(),
         avatar_url: String::new(),
         token,

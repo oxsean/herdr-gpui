@@ -110,7 +110,7 @@ fn pull_requests_and_issues_list_a_local_checkout(cx: &mut TestAppContext) {
         target: herdr_client::ConnectTarget::Local,
         checkout: linked.to_string_lossy().into_owned(),
         workspace_id: "w1".into(),
-        token: Some(crate::github::Tokens::new(&main, std::iter::empty())),
+        token: Some(crate::github::Tokens::new(Some(&main), std::iter::empty())),
         data_root: Some(dir.path().join("data")),
         gitlab_store: Default::default(),
         timing: Timing {

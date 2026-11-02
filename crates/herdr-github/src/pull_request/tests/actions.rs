@@ -18,9 +18,16 @@ fn action_identity_check_names_and_merge_methods_are_validated() {
             "pullRequests":{"nodes":[pr]}
         }}})
     };
-    let parsed = parse_graphql(reply(&pr), "example", "project", "feature", None)
-        .unwrap()
-        .unwrap();
+    let parsed = parse_graphql(
+        reply(&pr),
+        &crate::Server::GitHub,
+        "example",
+        "project",
+        "feature",
+        None,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(parsed.id, "PR_kwDOabc-_=");
     assert_eq!(parsed.head_ref_oid, "a".repeat(40));
     assert_eq!(
@@ -42,9 +49,16 @@ fn action_identity_check_names_and_merge_methods_are_validated() {
         let mut reply = reply(&pr);
         reply["data"]["repository"]["squashMergeAllowed"] = serde_json::Value::Null;
         reply["data"]["repository"]["rebaseMergeAllowed"] = serde_json::json!("true");
-        let parsed = parse_graphql(reply, "example", "project", "feature", None)
-            .unwrap()
-            .unwrap();
+        let parsed = parse_graphql(
+            reply,
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            "feature",
+            None,
+        )
+        .unwrap()
+        .unwrap();
         assert!(parsed.id.is_empty() && parsed.head_ref_oid.is_empty());
         assert!(parsed.merge_methods.is_empty());
     }

@@ -17,12 +17,12 @@ use gpui::{prelude::*, *};
 
 impl OrchestratorView {
     /// The token that reads the followed pull request's repository.
-    fn pr_token(&self) -> Option<std::sync::Arc<secrecy::SecretString>> {
+    fn pr_token(&self) -> Option<herdr_github::ServerToken> {
         let tokens = self.request()?.token.as_ref()?;
-        Some(match self.pr.target() {
-            Some(target) => tokens.for_owner(&target.owner).clone(),
-            None => tokens.main().clone(),
-        })
+        match self.pr.target() {
+            Some(target) => tokens.for_owner(&target.server, &target.owner).cloned(),
+            None => tokens.main().cloned(),
+        }
     }
 
     /// The looked-up status of the open pull request, once it arrived.

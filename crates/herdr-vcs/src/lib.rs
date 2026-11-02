@@ -12,3 +12,7 @@ mod error;
 pub mod git;
 
 pub use error::{Error, Result};
+
+#[cfg(test)]
+#[path = "../../test-support/graphql_export.rs"]
+mod graphql_export;

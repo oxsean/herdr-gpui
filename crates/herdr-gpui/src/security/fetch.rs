@@ -164,11 +164,16 @@ impl<'a> Found<'a> {
         let Some((owner, _)) = self.name.split_once('/') else {
             return;
         };
-        let token = account.1.for_owner(owner).expose_secret();
+        let reads = |tokens: &Tokens| {
+            tokens
+                .for_owner(&herdr_github::Server::GitHub, owner)
+                .map(|token| token.token.expose_secret().to_owned())
+        };
+        let token = reads(account.1);
         if self
             .accounts
             .iter()
-            .all(|(_, tokens)| tokens.for_owner(owner).expose_secret() != token)
+            .all(|(_, tokens)| reads(tokens) != token)
         {
             self.accounts.push(account);
         }
@@ -205,7 +210,7 @@ fn alerts(name: &str, tokens: &Tokens, cancelled: &AtomicBool) -> Result<Alerts,
     let mut cooldown = None;
     let response = crate::github::graphql(
         "security",
-        tokens.for_owner(owner),
+        super::token(tokens, owner)?,
         QUERY,
         serde_json::json!({"owner": owner, "repo": repo}),
         TIMEOUT,
@@ -219,7 +224,7 @@ fn alerts(name: &str, tokens: &Tokens, cancelled: &AtomicBool) -> Result<Alerts,
     }
     let check = crate::github::rest::<serde_json::Value>(
         "security",
-        tokens.for_owner(owner),
+        super::token(tokens, owner)?,
         &format!("/repos/{name}/dependabot/alerts?state=open&per_page=1"),
         TIMEOUT,
         || cancelled.load(Ordering::Relaxed),

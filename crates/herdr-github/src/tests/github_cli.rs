@@ -3,6 +3,7 @@ use crate::{Account, Source};
 
 fn cli_profile(repo_scope: bool) -> Profile {
     Profile {
+        server: Default::default(),
         login: "cli-user".into(),
         avatar_url: String::new(),
         token: Arc::new("gho_fixture".into()),

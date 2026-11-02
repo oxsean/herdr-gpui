@@ -53,3 +53,7 @@ mod test_executable;
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../test-support/graphql_export.rs"]
+mod graphql_export;

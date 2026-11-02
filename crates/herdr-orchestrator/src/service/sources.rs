@@ -2,6 +2,7 @@
 //! CLI's say in whether a remote is a GitLab project.
 
 use super::{Provider, RepoInfo, SourceKey, SourceStatus, SyncState, Worker, gitlab};
+use herdr_github::Server;
 
 impl SyncState {
     /// How many items the source's last sync reported, kept while it syncs
@@ -27,19 +28,22 @@ impl Worker {
 }
 
 /// Makes `info`'s remote a GitLab source when glab knows its host; returns
-/// whether it changed. `cli` reads glab's config, only when needed.
+/// whether it changed. A GitHub Enterprise Server some account signed in to
+/// stays GitHub. `cli` reads glab's config, only when needed.
 pub(super) fn recognize(
     info: &mut RepoInfo,
+    enterprise: &[Server],
     cli: impl FnOnce() -> Vec<gitlab::cli_hosts::CliHost>,
 ) -> bool {
-    info.remote
-        .as_mut()
-        .is_some_and(|remote| gitlab::recognize(&mut remote.source, cli))
+    info.remote.as_mut().is_some_and(|remote| {
+        Server::of_host(&remote.source.host, enterprise).is_none()
+            && gitlab::recognize(&mut remote.source, cli)
+    })
 }
 
 /// Each source of `info`, syncing when this build can read it.
-pub(super) fn statuses(info: &RepoInfo) -> Vec<SourceStatus> {
-    sources(info)
+pub(super) fn statuses(info: &RepoInfo, enterprise: &[Server]) -> Vec<SourceStatus> {
+    sources(info, enterprise)
         .into_iter()
         .map(|(key, supported)| SourceStatus {
             key,
@@ -52,11 +56,12 @@ pub(super) fn statuses(info: &RepoInfo) -> Vec<SourceStatus> {
         .collect()
 }
 
-/// The sources a repository has, and whether this build can read each.
-pub fn sources(info: &RepoInfo) -> Vec<(SourceKey, bool)> {
+/// The sources a repository has, and whether this build can read each: a
+/// GitHub source on GitHub.com or on one of `enterprise`.
+pub fn sources(info: &RepoInfo, enterprise: &[Server]) -> Vec<(SourceKey, bool)> {
     let remote = info.remote.as_ref().map(|remote| {
         let supported = match remote.source.provider {
-            Provider::Github => remote.source.host == "github.com",
+            Provider::Github => Server::of_host(&remote.source.host, enterprise).is_some(),
             Provider::Gitlab => true,
             Provider::Beads => false,
         };

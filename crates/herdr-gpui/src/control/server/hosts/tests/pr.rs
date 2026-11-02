@@ -162,7 +162,9 @@ fn comments_load_only_for_the_followed_pull_request(cx: &mut TestAppContext) {
             assert_eq!(error_code(&refused), Some(ErrorCode::Failed));
             view.pr_actions.track(Some(target.clone()));
             view.pr_actions
-                .load_comments(std::sync::Arc::new(secrecy::SecretString::from("token")))
+                .load_comments(herdr_github::ServerToken::github(std::sync::Arc::new(
+                    secrecy::SecretString::from("token"),
+                )))
                 .unwrap();
             // Loading: no answer yet, so the request stays parked.
             assert!(super::super::pr::loaded(view, &target).is_none());

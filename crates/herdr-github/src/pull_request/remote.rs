@@ -3,6 +3,7 @@
 //! `upstream` remote and pushes to its own `origin`.
 
 use super::fetch::{git, origin_repository};
+use crate::{Repo, Server};
 use std::time::Instant;
 
 /// A Git remote this client reads pull request refs from.
@@ -25,12 +26,13 @@ impl Remote {
 /// The repository a checkout's pull requests are opened against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Base {
+    pub server: Server,
     pub owner: String,
     pub repo: String,
     pub remote: Remote,
     /// For an `upstream` base, the owner of the GitHub fork behind `origin`,
     /// where this checkout's own branches are pushed. `None` when `origin` is
-    /// not on GitHub.com, or when the base is `origin` itself.
+    /// not on the base's server, or when the base is `origin` itself.
     pub fork_owner: Option<String>,
 }
 
@@ -56,22 +58,24 @@ impl Base {
 }
 
 /// A GitHub `upstream` remote when the checkout has one that names another
-/// repository than origin, otherwise origin. An `upstream` that is not on
-/// GitHub.com, or that names origin's own repository, is ignored rather than
-/// fatal, so such checkouts keep the ordinary same-repository path.
+/// repository than origin, otherwise origin. An `upstream` that is on no
+/// known server, or that names origin's own repository, is ignored rather
+/// than fatal, so such checkouts keep the ordinary same-repository path.
+/// `enterprise` are the GitHub Enterprise Servers an account signed in to.
 pub fn base_repository(
     checkout: &str,
+    enterprise: &[Server],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
 ) -> crate::Result<Base> {
-    let origin = origin_repository(checkout, deadline, cancelled);
+    let origin = origin_repository(checkout, enterprise, deadline, cancelled);
     let upstream = git(
         checkout,
         &["config", "--default", "", "--get", "remote.upstream.url"],
         deadline,
         cancelled,
     );
-    base(origin, upstream.ok().as_deref())
+    base(origin, upstream.ok().as_deref(), enterprise)
 }
 
 /// Resolve a saved SSH host's repository without interpreting its paths on
@@ -79,6 +83,7 @@ pub fn base_repository(
 pub fn remote_repository(
     target: &str,
     input: &super::Input,
+    enterprise: &[Server],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
 ) -> crate::Result<Base> {
@@ -93,42 +98,41 @@ pub fn remote_repository(
         )?)
     };
     let origin = read("remote.origin.url")?
-        .as_deref()
-        .and_then(crate::github_repo)
+        .and_then(|remote| crate::github_repo(&remote, enterprise))
         .ok_or_else(|| super::Error::Origin.into());
     let upstream = read("remote.upstream.url")?;
-    base(origin, upstream.as_deref())
+    base(origin, upstream.as_deref(), enterprise)
 }
 
-fn base(origin: crate::Result<(String, String)>, upstream: Option<&str>) -> crate::Result<Base> {
-    if let Some((owner, repo)) = upstream.and_then(crate::github_repo)
-        && !origin
-            .as_ref()
-            .is_ok_and(|origin| same_repository(origin, (&owner, &repo)))
+fn base(
+    origin: crate::Result<Repo>,
+    upstream: Option<&str>,
+    enterprise: &[Server],
+) -> crate::Result<Base> {
+    if let Some(upstream) = upstream.and_then(|remote| crate::github_repo(remote, enterprise))
+        && !origin.as_ref().is_ok_and(|origin| origin.same(&upstream))
     {
         let fork_owner = origin
             .ok()
-            .map(|(fork, _)| fork)
-            .filter(|fork| !fork.eq_ignore_ascii_case(&owner));
+            .filter(|fork| fork.server == upstream.server)
+            .map(|fork| fork.owner)
+            .filter(|fork| !fork.eq_ignore_ascii_case(&upstream.owner));
         return Ok(Base {
-            owner,
-            repo,
+            server: upstream.server,
+            owner: upstream.owner,
+            repo: upstream.name,
             remote: Remote::Upstream,
             fork_owner,
         });
     }
-    let (owner, repo) = origin?;
+    let origin = origin?;
     Ok(Base {
-        owner,
-        repo,
+        server: origin.server,
+        owner: origin.owner,
+        repo: origin.name,
         remote: Remote::Origin,
         fork_owner: None,
     })
-}
-
-/// GitHub owner and repository names are case-insensitive.
-fn same_repository((owner, repo): &(String, String), other: (&str, &str)) -> bool {
-    owner.eq_ignore_ascii_case(other.0) && repo.eq_ignore_ascii_case(other.1)
 }
 
 #[cfg(test)]

@@ -316,7 +316,7 @@ impl HerdrWindow {
         for (action, label) in destructive {
             panel = panel.child(self.render_workspace_danger(action, label, cx));
         }
-        if self.pr_profile().is_some() {
+        if self.pr_signed_in() {
             panel = panel.child(self.render_workspace_pr(pr_width, cx));
         }
         panel

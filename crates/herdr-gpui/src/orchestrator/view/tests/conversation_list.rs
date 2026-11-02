@@ -54,7 +54,7 @@ fn a_long_conversation_draws_only_the_rows_in_view(cx: &mut TestAppContext) {
     let key = pr.key.canonical();
     cx.update(|_, cx| {
         view.update(cx, |view, cx| {
-            view.repo_mut().request.token = Some(crate::github::Tokens::new(&profile, []));
+            view.repo_mut().request.token = Some(crate::github::Tokens::new(Some(&profile), []));
             view.pr.set_comments(comments);
             view.repo_mut().snapshot.items = Arc::new(vec![pr]);
             view.detail = Some(Detail {

@@ -37,7 +37,7 @@ github-menu-cli-session = Using GitHub CLI's sign-in for this app session. This 
 github-menu-cli-keeps-token = GitHub CLI keeps this token; Herdr UI saves none. After `gh auth logout`, this app signs out at its next check.
 
 # Additional accounts.
-github-menu-too-many-accounts = At most { $count } additional GitHub accounts can be added.
+github-menu-too-many-accounts = At most { $count } additional and GitHub Enterprise accounts can be added.
 github-menu-main-account = Main account
 github-menu-new-account = New account
 github-menu-add-account-chip = + Add account (A)
@@ -46,6 +46,19 @@ github-menu-account-note = Sign in to an account that can see repositories your 
 github-menu-account-owners = Reads repositories owned by { $owners }. Everything else uses your main account. Add owners in [github] accounts.
 github-menu-token-label = Personal access token
 github-menu-token-help = Create one at github.com/settings/tokens as this account: a classic token with repo and read:org, or a fine-grained token with Contents, Issues, and Pull requests read access. It is checked with GitHub, then saved like a browser sign-in.
+
+# GitHub Enterprise Server accounts. GitHub Enterprise Server is a product name.
+github-menu-add-enterprise = Add GitHub Enterprise account (E)
+github-menu-server-label = GitHub Enterprise Server
+github-menu-server-placeholder = github.example.com
+github-menu-server-help = The server's host name, with its HTTPS port if it is not 443. Herdr UI then asks for a personal access token of your account there.
+github-menu-server-invalid = Enter a host name, such as github.example.com, with an optional port. GitHub.com accounts are added with Add account.
+github-menu-continue = Continue (Enter)
+github-menu-enterprise-sign-in = Sign in with a personal access token of your account on this server.
+# $server is a GitHub Enterprise Server host.
+github-menu-enterprise-note = Reads repositories on { $server }. Repositories there are never read with a GitHub.com account.
+# $server is a GitHub Enterprise Server host.
+github-menu-enterprise-token-help = Create one on { $server } in your account's developer settings, with read access to repositories, issues, and pull requests. It is checked with { $server }, then saved like a browser sign-in.
 
 # What the GitHub App still needs from the user.
 github-menu-install-title = Install the GitHub App

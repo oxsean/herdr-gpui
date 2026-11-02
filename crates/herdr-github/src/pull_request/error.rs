@@ -27,7 +27,7 @@ pub enum Error {
     Metadata,
     #[error("No local worktree matches the daemon branch.")]
     MissingWorktree,
-    #[error("PR lookup supports GitHub.com origins only.")]
+    #[error("PR lookup supports GitHub.com and signed-in GitHub Enterprise Server origins only.")]
     Origin,
     #[error("Could not {operation} for Git PR lookup.")]
     Process {

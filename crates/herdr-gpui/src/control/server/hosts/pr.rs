@@ -35,7 +35,7 @@ fn lookup(view: &HerdrWindow, caller: &Caller) -> Result<(Place, Lookup), Respon
             ),
         ));
     }
-    if view.pr_profile().is_none() {
+    if !view.pr_signed_in() {
         return Err(Response::error(
             ErrorCode::InvalidRequest,
             "Sign in to GitHub in Herdr UI first",

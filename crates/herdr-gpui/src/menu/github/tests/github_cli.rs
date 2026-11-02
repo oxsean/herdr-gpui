@@ -14,6 +14,7 @@ fn the_main_account_offers_the_github_cli_and_a_host_does_not(cx: &mut TestAppCo
                     Action::GitHubCli,
                     Action::Start,
                     Action::Token,
+                    Action::AddEnterprise,
                     Action::Close
                 ]
             );
@@ -44,7 +45,12 @@ fn a_github_cli_session_says_so_and_how_to_reach_private_repositories(cx: &mut T
             view.menu.github = crate::github::Auth::github_cli_fixture(true);
             assert_eq!(
                 view.github_actions(),
-                [Action::SignOut, Action::Add, Action::Close]
+                [
+                    Action::SignOut,
+                    Action::Add,
+                    Action::AddEnterprise,
+                    Action::Close
+                ]
             );
             cx.notify();
         });

@@ -3,7 +3,7 @@
 //! size-capped and every call has a deadline, so no step can hang the worker.
 
 use super::{Input, Origin, Result};
-use crate::Error;
+use crate::{Error, Repo, Server, ServerToken};
 #[cfg(unix)]
 use std::os::{fd::OwnedFd, unix::net::UnixStream};
 use std::{
@@ -53,17 +53,18 @@ const ORIGIN_LIMIT: usize = 64;
 /// GitHub repositories resolved on saved hosts, keyed by SSH target and Git
 /// directory. Bounded, and owned by the single PR worker thread.
 #[derive(Default)]
-pub(super) struct Origins(Vec<(String, String, Instant, (String, String))>);
+pub(super) struct Origins(Vec<(String, String, Instant, Repo)>);
 
 impl Origins {
     fn resolve(
         &mut self,
         target: &str,
         input: &Input,
+        enterprise: &[Server],
         now: Instant,
         deadline: Instant,
         cancelled: &impl Fn() -> bool,
-    ) -> crate::Result<(String, String)> {
+    ) -> crate::Result<Repo> {
         // A remote workspace without daemon metadata never gets this far.
         let key = input.repo_key.as_deref().ok_or(super::Error::Metadata)?;
         self.0
@@ -86,7 +87,7 @@ impl Origins {
             "remote.upstream.url",
             timeout,
             cancelled,
-        ) && let Some(repo) = crate::github_repo(&upstream)
+        ) && let Some(repo) = crate::github_repo(&upstream, enterprise)
         {
             repo
         } else {
@@ -97,7 +98,7 @@ impl Origins {
                 .ok_or(super::Error::Timeout)?;
             let remote = herdr_client::remote_origin_url(target, key, timeout, cancelled)?
                 .ok_or(super::Error::Origin)?;
-            crate::github_repo(&remote).ok_or(super::Error::Origin)?
+            crate::github_repo(&remote, enterprise).ok_or(super::Error::Origin)?
         };
         if self.0.len() == ORIGIN_LIMIT {
             self.0.remove(0);
@@ -139,26 +140,33 @@ pub(super) enum Ask {
 
 /// The repository a checkout's pull request is in, and what to ask for it.
 pub(super) struct Target {
+    pub server: Server,
     pub owner: String,
     pub repo: String,
     pub ask: Ask,
 }
 
 /// Identifies a checkout's repository and branch with local Git or over SSH,
-/// by `deadline`, before any GitHub request is made for it.
+/// by `deadline`, before any GitHub request is made for it. A head on
+/// another server than the repository is not a pull request head.
 pub(super) fn target(
     input: &Input,
     origin: &Origin,
     origins: &mut Origins,
+    enterprise: &[Server],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
 ) -> crate::Result<Target> {
-    let ((owner, repo), head) = match origin {
+    let (repository, head) = match origin {
         Origin::Local => {
             let checkout = local_checkout(input, deadline, cancelled)?;
-            let base = super::remote::base_repository(&checkout, deadline, cancelled)?;
-            let repository = (base.owner, base.repo);
-            let head = upstream_head(&input.branch, |key| {
+            let base = super::remote::base_repository(&checkout, enterprise, deadline, cancelled)?;
+            let repository = Repo {
+                server: base.server,
+                owner: base.owner,
+                name: base.repo,
+            };
+            let head = upstream_head(&input.branch, &repository.server, enterprise, |key| {
                 let value = git(
                     &checkout,
                     &["config", "--default", "", "--get", key],
@@ -177,25 +185,23 @@ pub(super) fn target(
                     cancelled,
                 )
                 .ok()
-                .as_deref()
-                .and_then(crate::github_repo)
-                .filter(|(origin_owner, origin_repo)| {
-                    origin_owner != &repository.0 || origin_repo != &repository.1
-                })
-                .map(|(owner, repo)| Head {
-                    owner,
-                    repo,
-                    branch: input.branch.clone(),
-                })
+                .and_then(|remote| fork_head(&remote, &repository, enterprise, &input.branch))
             } else {
                 head
             };
             (repository, head)
         }
         Origin::Ssh(target) => {
-            let repository = origins.resolve(target, input, Instant::now(), deadline, cancelled)?;
+            let repository = origins.resolve(
+                target,
+                input,
+                enterprise,
+                Instant::now(),
+                deadline,
+                cancelled,
+            )?;
             let key = input.repo_key.as_deref().ok_or(super::Error::Metadata)?;
-            let head = upstream_head(&input.branch, |name| {
+            let head = upstream_head(&input.branch, &repository.server, enterprise, |name| {
                 let timeout = deadline
                     .checked_duration_since(Instant::now())
                     .ok_or(super::Error::Timeout)?;
@@ -212,16 +218,7 @@ pub(super) fn target(
                 herdr_client::remote_origin_url(target, key, timeout, cancelled)
                     .ok()
                     .flatten()
-                    .as_deref()
-                    .and_then(crate::github_repo)
-                    .filter(|(origin_owner, origin_repo)| {
-                        origin_owner != &repository.0 || origin_repo != &repository.1
-                    })
-                    .map(|(owner, repo)| Head {
-                        owner,
-                        repo,
-                        branch: input.branch.clone(),
-                    })
+                    .and_then(|remote| fork_head(&remote, &repository, enterprise, &input.branch))
             } else {
                 head
             };
@@ -239,7 +236,25 @@ pub(super) fn target(
             head,
         },
     };
-    Ok(Target { owner, repo, ask })
+    Ok(Target {
+        server: repository.server,
+        owner: repository.owner,
+        repo: repository.name,
+        ask,
+    })
+}
+
+/// The head `branch` has in a fork `origin` names, on the repository's own
+/// server: an origin elsewhere cannot open a pull request against it.
+fn fork_head(origin: &str, repository: &Repo, enterprise: &[Server], branch: &str) -> Option<Head> {
+    crate::github_repo(origin, enterprise)
+        .filter(|fork| fork.server == repository.server)
+        .filter(|fork| fork.owner != repository.owner || fork.name != repository.name)
+        .map(|fork| Head {
+            owner: fork.owner,
+            repo: fork.name,
+            branch: branch.to_owned(),
+        })
 }
 
 /// Any pull request of `owner/repo` by its number, for views that list pull
@@ -248,7 +263,7 @@ pub fn by_number(
     owner: &str,
     repo: &str,
     number: u64,
-    token: &secrecy::SecretString,
+    token: &ServerToken,
     cancelled: impl Fn() -> bool,
     cooldown: &mut Option<Duration>,
 ) -> Result {
@@ -261,7 +276,7 @@ pub fn by_number(
         cancelled,
         cooldown,
     )?;
-    super::parse::parse_by_number(response, owner, repo, number)
+    super::parse::parse_by_number(response, &token.server, owner, repo, number)
 }
 
 /// The remote head configured for this local branch, independent of its local name.
@@ -272,8 +287,11 @@ pub(super) struct Head {
     pub branch: String,
 }
 
+/// The configured upstream head of `branch`, which must be on `server`.
 pub(super) fn upstream_head(
     branch: &str,
+    server: &Server,
+    enterprise: &[Server],
     mut config: impl FnMut(&str) -> crate::Result<Option<String>>,
 ) -> crate::Result<Option<Head>> {
     let remote = config(&format!("branch.{branch}.remote"))?;
@@ -288,42 +306,46 @@ pub(super) fn upstream_head(
         .filter(|branch| !branch.is_empty())
         .ok_or(super::Error::Branch)?;
     let url = config(&format!("remote.{remote}.url"))?.ok_or(super::Error::Origin)?;
-    let (owner, repo) = crate::github_repo(&url).ok_or(super::Error::Origin)?;
+    let head = crate::github_repo(&url, enterprise)
+        .filter(|head| &head.server == server)
+        .ok_or(super::Error::Origin)?;
     Ok(Some(Head {
-        owner,
-        repo,
+        owner: head.owner,
+        repo: head.name,
         branch: branch.to_owned(),
     }))
 }
 
 pub fn local_repository(
     input: &Input,
+    enterprise: &[Server],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
 ) -> crate::Result<super::Base> {
     let checkout = local_checkout(input, deadline, cancelled)?;
-    super::remote::base_repository(&checkout, deadline, cancelled)
+    super::remote::base_repository(&checkout, enterprise, deadline, cancelled)
 }
 
-/// The GitHub owner and repository behind a verified checkout's origin remote.
+/// The GitHub repository behind a verified checkout's origin remote.
 pub(super) fn origin_repository(
     checkout: &str,
+    enterprise: &[Server],
     deadline: Instant,
     cancelled: &impl Fn() -> bool,
-) -> crate::Result<(String, String)> {
+) -> crate::Result<Repo> {
     let remote = git(
         checkout,
         &["config", "--get", "remote.origin.url"],
         deadline,
         cancelled,
     )?;
-    crate::github_repo(&remote).ok_or_else(|| {
+    crate::github_repo(&remote, enterprise).ok_or_else(|| {
         // An SSH host alias for a second account (`github-work:owner/repo`)
         // is the usual reason; only the host is logged, never credentials.
         tracing::debug!(
             category = "github_origin",
             host = remote_host(&remote),
-            "Origin remote is not a GitHub.com repository"
+            "Origin remote is not a repository on a known GitHub server"
         );
         super::Error::Origin.into()
     })
@@ -708,6 +730,14 @@ mod origin_tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
 
+    fn repo() -> Repo {
+        Repo {
+            server: Server::GitHub,
+            owner: "owner".into(),
+            name: "repo".into(),
+        }
+    }
+
     fn input(key: &str) -> Input {
         Input {
             checkout: None,
@@ -723,21 +753,12 @@ mod origin_tests {
         let deadline = now + TIMEOUT;
         // An invalid target fails before SSH, so reaching it proves a miss.
         let target = "-not-dialled";
-        let mut origins = Origins(vec![(
-            target.into(),
-            "/repo/.git".into(),
-            now,
-            ("owner".into(), "repo".into()),
-        )]);
+        let mut origins = Origins(vec![(target.into(), "/repo/.git".into(), now, repo())]);
         let mut resolve = |key: &str, at: Instant| {
-            origins.resolve(target, &input(key), at, deadline.max(at + TIMEOUT), &|| {
-                false
-            })
+            let deadline = deadline.max(at + TIMEOUT);
+            origins.resolve(target, &input(key), &[], at, deadline, &|| false)
         };
-        assert_eq!(
-            resolve("/repo/.git", now).unwrap(),
-            ("owner".into(), "repo".into())
-        );
+        assert_eq!(resolve("/repo/.git", now).unwrap(), repo());
         // Another repository on the same host is not a hit.
         assert!(matches!(
             resolve("/other/.git", now),
@@ -748,4 +769,10 @@ mod origin_tests {
         assert!(resolve("/repo/.git", now + ORIGIN_TTL).is_err());
         assert!(origins.0.is_empty());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("pullRequestByNumber", NUMBER_QUERY);
 }

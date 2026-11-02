@@ -1,13 +1,15 @@
 //! `[github]`: the sign-in client, the plaintext opt-in, and the additional
-//! accounts the GitHub page adds. An account's token is never here: only the
-//! credential store entry it signs in under and the owners it reads.
+//! and GitHub Enterprise Server accounts the GitHub page adds. An account's
+//! token is never here: only the credential store entry it signs in under and
+//! the owners it reads.
 
-use crate::{Error, Result, error::AccountsError};
+use crate::{Error, Result, Server, error::AccountsError};
 use serde::Deserialize;
 use std::env;
 
-/// More accounts than anyone keeps apart by repository owner; the bound keeps
-/// every window's per-account sign-in checks few.
+/// More accounts than anyone keeps apart by repository owner, additional and
+/// GitHub Enterprise Server accounts together; the bound keeps every window's
+/// per-account sign-in checks few.
 pub const MAX_ACCOUNTS: usize = 8;
 /// Owners one account lists besides its login and organizations.
 const MAX_OWNERS: usize = 32;
@@ -21,6 +23,9 @@ pub struct GitHubConfig {
     /// Accounts read for the repositories they cover, in this order; any
     /// other repository is read with the main sign-in.
     pub accounts: Vec<GitHubAccount>,
+    /// Accounts on GitHub Enterprise Servers. A table of its own, so a build
+    /// that does not know it never reads them as GitHub.com accounts.
+    pub enterprise: Vec<EnterpriseAccount>,
 }
 
 /// An additional GitHub account. `id` names its credential store entry, so it
@@ -37,13 +42,45 @@ pub struct GitHubAccount {
 impl GitHubAccount {
     /// A new account with a random ID and no owners of its own yet.
     pub fn generate() -> Result<Self> {
-        let mut bytes = [0_u8; ID_BYTES];
-        getrandom::fill(&mut bytes).map_err(AccountsError::Random)?;
         Ok(Self {
-            id: bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+            id: generate_id()?,
             owners: Vec::new(),
         })
     }
+}
+
+/// An account on the GitHub Enterprise Server `server`, a host name with an
+/// optional HTTPS port (see [`Server::enterprise`]). `id` and `owners` are
+/// as for [`GitHubAccount`]; the first account on a server also reads the
+/// owners no other account there covers.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct EnterpriseAccount {
+    pub server: String,
+    pub id: String,
+    #[serde(default)]
+    pub owners: Vec<String>,
+}
+
+impl EnterpriseAccount {
+    /// A new account on `server` with a random ID.
+    pub fn generate(server: &Server) -> Result<Self> {
+        Ok(Self {
+            server: server.host().to_owned(),
+            id: generate_id()?,
+            owners: Vec::new(),
+        })
+    }
+
+    /// The server, once [`GitHubConfig::check_accounts`] accepted it.
+    pub fn server(&self) -> Option<Server> {
+        Server::enterprise(&self.server)
+    }
+}
+
+fn generate_id() -> Result<String> {
+    let mut bytes = [0_u8; ID_BYTES];
+    getrandom::fill(&mut bytes).map_err(AccountsError::Random)?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 /// 32 lowercase hexadecimal digits: safe in a keyring account name and a
@@ -107,37 +144,70 @@ impl GitHubConfig {
     /// Keeps the accounts and owners this build holds, and names the rest as
     /// ignored keys: a newer build may allow more.
     pub fn limit_accounts(&mut self) -> Vec<String> {
-        let mut ignored: Vec<String> = (MAX_ACCOUNTS..self.accounts.len())
-            .map(|index| format!("github.accounts.{index}"))
-            .collect();
-        self.accounts.truncate(MAX_ACCOUNTS);
-        for (index, account) in self.accounts.iter_mut().enumerate() {
-            ignored.extend(
-                (MAX_OWNERS..account.owners.len())
-                    .map(|owner| format!("github.accounts.{index}.owners.{owner}")),
-            );
-            account.owners.truncate(MAX_OWNERS);
-        }
+        let mut ignored = limit("accounts", &mut self.accounts, MAX_ACCOUNTS, |account| {
+            &mut account.owners
+        });
+        let room = MAX_ACCOUNTS - self.accounts.len();
+        ignored.extend(limit("enterprise", &mut self.enterprise, room, |account| {
+            &mut account.owners
+        }));
         ignored
     }
 
     /// Refuses accounts the app could not tell apart or store.
     pub fn check_accounts(&self) -> Result<()> {
-        check_accounts(&self.accounts).map_err(Error::from)
+        check_accounts(&self.accounts, &self.enterprise).map_err(Error::from)
     }
 }
 
-pub fn check_accounts(accounts: &[GitHubAccount]) -> std::result::Result<(), AccountsError> {
-    for (index, account) in accounts.iter().enumerate() {
-        if !valid_account_id(&account.id) {
+fn limit<T>(
+    table: &str,
+    accounts: &mut Vec<T>,
+    max: usize,
+    owners: impl Fn(&mut T) -> &mut Vec<String>,
+) -> Vec<String> {
+    let mut ignored: Vec<String> = (max..accounts.len())
+        .map(|index| format!("github.{table}.{index}"))
+        .collect();
+    accounts.truncate(max);
+    for (index, account) in accounts.iter_mut().enumerate() {
+        let owners = owners(account);
+        ignored.extend(
+            (MAX_OWNERS..owners.len())
+                .map(|owner| format!("github.{table}.{index}.owners.{owner}")),
+        );
+        owners.truncate(MAX_OWNERS);
+    }
+    ignored
+}
+
+pub fn check_accounts(
+    accounts: &[GitHubAccount],
+    enterprise: &[EnterpriseAccount],
+) -> std::result::Result<(), AccountsError> {
+    let entries = accounts
+        .iter()
+        .map(|account| (&account.id, &account.owners))
+        .chain(
+            enterprise
+                .iter()
+                .map(|account| (&account.id, &account.owners)),
+        );
+    for (index, (id, owners)) in entries.clone().enumerate() {
+        if !valid_account_id(id) {
             return Err(AccountsError::Id);
         }
-        if accounts[..index].iter().any(|other| other.id == account.id) {
-            return Err(AccountsError::DuplicateId(account.id.clone()));
+        if entries.clone().take(index).any(|(other, _)| other == id) {
+            return Err(AccountsError::DuplicateId(id.clone()));
         }
-        if let Some(owner) = account.owners.iter().find(|owner| !valid_owner(owner)) {
+        if let Some(owner) = owners.iter().find(|owner| !valid_owner(owner)) {
             return Err(AccountsError::Owner(owner.chars().take(100).collect()));
         }
+    }
+    if let Some(account) = enterprise.iter().find(|account| account.server().is_none()) {
+        return Err(AccountsError::Server(
+            account.server.chars().take(100).collect(),
+        ));
     }
     Ok(())
 }

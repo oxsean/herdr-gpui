@@ -127,8 +127,8 @@ impl Cache {
     pub fn clear(&mut self) {
         self.suspend();
         if let Ok(mut store) = self.store.try_borrow_mut() {
-            let logins = self.token.iter().flat_map(crate::Tokens::logins);
-            store.forget(&self.view.login, logins);
+            let logins: Vec<String> = self.token.iter().flat_map(crate::Tokens::logins).collect();
+            store.forget(&self.view.login, logins.iter().map(String::as_str));
         }
         self.scope = None;
         self.token = None;
@@ -302,7 +302,6 @@ impl Cache {
         let paused: Vec<String> = token
             .logins()
             .filter(|login| store.pause(login, now).is_some())
-            .map(str::to_owned)
             .collect();
         let mut batch = Vec::new();
         while batch.len() < self.batch.0.max(1)
@@ -544,7 +543,7 @@ fn pause<'a>(
 ) -> Option<(Instant, Option<&'a str>)> {
     tokens
         .logins()
-        .map(|login| store.pause(login, now))
+        .map(|login| store.pause(&login, now))
         .collect::<Option<Vec<_>>>()?
         .into_iter()
         .min_by_key(|(until, _)| *until)

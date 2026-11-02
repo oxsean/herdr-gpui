@@ -29,3 +29,20 @@ fn a_mapping_added_after_opening_makes_the_remote_a_gitlab_source() {
     worker.recognize(|| unreachable!());
     assert_eq!(source(&worker).key, expected);
 }
+
+#[test]
+fn a_signed_in_github_enterprise_server_stays_github() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_service, mut worker, _host) = opened(dir.path());
+    let mut profile = herdr_github::Profile::fixture("dev", Arc::new("work-token".into()), &[]);
+    profile.server = Server::enterprise("github.acme.com").unwrap();
+    worker.request.token = Some(Tokens::new(None, [(&profile, &[][..])]));
+    // glab is not asked about a host an enterprise account signed in to.
+    worker.recognize(|| unreachable!());
+    let info = worker.snapshot.repo.clone().unwrap();
+    assert_eq!(
+        info.remote.as_ref().unwrap().source.provider,
+        Provider::Github
+    );
+    assert!(sources(&info, &worker.enterprise())[0].1);
+}

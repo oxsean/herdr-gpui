@@ -106,16 +106,34 @@ fn native_graphql_normalizes_nullable_reviews_and_bounded_checks() {
         "pageInfo":{"hasNextPage":true}, "nodes":[{"__typename":"StatusContext","state":"SUCCESS"}]
     }}}}]});
     let response = serde_json::json!({"data":{"repository":{"pullRequests":{"nodes":[pr]}}}});
-    let pr = parse_graphql(response.clone(), "example", "project", "feature", None)
-        .unwrap()
-        .unwrap();
+    let pr = parse_graphql(
+        response.clone(),
+        &crate::Server::GitHub,
+        "example",
+        "project",
+        "feature",
+        None,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(pr.review(), "No review decision");
     assert!(pr.checks_summary.contains("1 passed"));
     assert!(pr.checks_summary.contains("first 100"));
-    assert!(parse_graphql(response, "wrong", "project", "feature", None).is_err());
+    assert!(
+        parse_graphql(
+            response,
+            &crate::Server::GitHub,
+            "wrong",
+            "project",
+            "feature",
+            None
+        )
+        .is_err()
+    );
     assert!(
         parse_graphql(
             serde_json::json!({"data":{"repository":null}}),
+            &crate::Server::GitHub,
             "a",
             "b",
             "c",
@@ -126,6 +144,7 @@ fn native_graphql_normalizes_nullable_reviews_and_bounded_checks() {
     assert!(
         parse_graphql(
             serde_json::json!({"data":{"repository":{"pullRequests":{"nodes":[]}}}}),
+            &crate::Server::GitHub,
             "a",
             "b",
             "c",

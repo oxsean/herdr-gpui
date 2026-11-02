@@ -11,7 +11,6 @@
 
 use super::{Activity, Checkpoint, Error, Item, ItemKey, PullRequest, Result, SourceKey};
 use chrono::{DateTime, TimeDelta, Utc};
-use secrecy::SecretString;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -123,7 +122,7 @@ pub struct Listing {
 /// while the last full listing is recent, from `resume` (else the checkpoint).
 pub fn sync(
     source: &SourceKey,
-    token: &SecretString,
+    token: &herdr_github::ServerToken,
     previous: Option<&Checkpoint>,
     (cached, resume): (Option<Vec<Item>>, Option<Resume>),
     cancelled: &impl Fn() -> bool,
@@ -534,4 +533,12 @@ impl PullRequestNode {
         });
         item
     }
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("issues", ISSUES);
+    crate::graphql_export::export("changedIssues", CHANGED_ISSUES);
+    crate::graphql_export::export("pullRequests", PULL_REQUESTS);
 }

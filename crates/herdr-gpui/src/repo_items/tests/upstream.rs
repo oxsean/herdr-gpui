@@ -6,6 +6,7 @@ use crate::pull_request::Remote;
 
 fn upstream() -> Origin {
     Origin {
+        server: herdr_github::Server::GitHub,
         owner: "base-owner".into(),
         repo: "project".into(),
         remote: Remote::Upstream,

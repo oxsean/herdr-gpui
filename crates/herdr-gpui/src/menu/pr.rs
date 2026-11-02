@@ -23,10 +23,10 @@ impl HerdrWindow {
     /// keep the answers found while it was selected.
     pub(crate) fn endpoint_pr_view(&self, index: usize) -> Option<View> {
         let origin = self.endpoint_pr_origin(index)?;
-        let profile = self.endpoint_pr_profile(index)?;
-        Some(View {
+        let tokens = self.tokens_over(self.endpoint_pr_profile(index));
+        (!tokens.is_empty()).then(|| View {
             origin,
-            login: self.tokens_over(profile).key(),
+            login: tokens.key(),
         })
     }
 
@@ -47,7 +47,7 @@ impl HerdrWindow {
 
     pub(super) fn refresh_workspace_pr(&mut self) {
         self.menu.pr.clear();
-        if self.pr_profile().is_none() {
+        if !self.pr_signed_in() {
             return;
         }
         let result = (|| {
@@ -174,7 +174,7 @@ impl HerdrWindow {
 
     pub(crate) fn update_workspace_pr(&mut self) -> bool {
         let mut changed = false;
-        if self.pr_profile().is_none() {
+        if !self.pr_signed_in() {
             self.menu.pr_cache.clear();
             self.menu.pr.clear();
             if self.menu.workspace_selected == Some(WorkspaceMenuAction::PullRequest) {
@@ -252,7 +252,7 @@ impl HerdrWindow {
     }
 
     pub(super) fn open_workspace_pr(&self, cx: &mut Context<Self>) {
-        if self.pr_profile().is_some()
+        if self.pr_signed_in()
             && self.workspace_pr_target_current()
             && let Some(pr) = &self.menu.pr.value
         {

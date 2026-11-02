@@ -327,6 +327,7 @@ fn created_pull_requests_must_match_their_repository() {
     let response = |url: &str, number: u64| serde_json::json!({"data":{"createPullRequest":{"pullRequest":{"number":number,"url":url}}}});
     let outcome = parse_created(
         &response("https://github.com/example/project/pull/7", 7),
+        &herdr_github::Server::GitHub,
         "example",
         "project",
     )
@@ -343,10 +344,36 @@ fn created_pull_requests_must_match_their_repository() {
         ("https://github.com/example/project/pull/0", 0),
     ] {
         assert!(matches!(
-            parse_created(&response(url, number), "example", "project"),
+            parse_created(
+                &response(url, number),
+                &herdr_github::Server::GitHub,
+                "example",
+                "project"
+            ),
             Err(crate::Error::GitHub(herdr_github::Error::PullRequest(
                 herdr_github::pull_request::Error::Identity
             )))
         ));
     }
+    let ghes = herdr_github::Server::enterprise("git.example.com").unwrap();
+    let outcome = parse_created(
+        &response("https://git.example.com/example/project/pull/7", 7),
+        &ghes,
+        "example",
+        "project",
+    )
+    .unwrap();
+    assert_eq!(
+        outcome.url.as_deref(),
+        Some("https://git.example.com/example/project/pull/7")
+    );
+    assert!(
+        parse_created(
+            &response("https://github.com/example/project/pull/7", 7),
+            &ghes,
+            "example",
+            "project",
+        )
+        .is_err()
+    );
 }

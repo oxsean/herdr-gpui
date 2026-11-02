@@ -289,6 +289,7 @@ fn live_local_pr_lookup() {
     client.handle.disconnect();
     crate::pull_request::local_repository(
         &input,
+        &[],
         Instant::now() + Duration::from_secs(15),
         &|| false,
     )

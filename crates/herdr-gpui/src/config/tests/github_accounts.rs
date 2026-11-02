@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{GitHubAccount, MAX_ACCOUNTS};
+use crate::config::{EnterpriseAccount, GitHubAccount, MAX_ACCOUNTS};
 use herdr_github::AccountsError;
 
 const ID: &str = "0123456789abcdef0123456789abcdef";
@@ -218,5 +218,128 @@ fn an_add_the_app_would_refuse_is_not_written() -> anyhow::Result<()> {
             AccountsError::TooMany(_)
         )))
     ));
+    Ok(())
+}
+
+fn enterprise(server: &str, id: &str) -> EnterpriseAccount {
+    EnterpriseAccount {
+        server: server.into(),
+        id: id.into(),
+        owners: Vec::new(),
+    }
+}
+
+#[test]
+fn enterprise_accounts_load_without_a_github_com_account() -> anyhow::Result<()> {
+    let config = Config::parse(&format!(
+        "[[github.enterprise]]\nserver = \"Git.Example.com:8443\"\nid = \"{ID}\"\nowners = [\"team\"]\n"
+    ))?;
+    assert!(config.github.accounts.is_empty());
+    assert_eq!(
+        config.github.enterprise,
+        [EnterpriseAccount {
+            server: "Git.Example.com:8443".into(),
+            id: ID.into(),
+            owners: vec!["team".into()],
+        }]
+    );
+    assert_eq!(
+        config.github.enterprise[0].server(),
+        herdr_github::Server::enterprise("git.example.com:8443")
+    );
+    Ok(())
+}
+
+#[test]
+fn enterprise_accounts_the_app_could_not_reach_or_tell_apart_are_refused() {
+    for server in [
+        "https://git.example.com",
+        "git.example.com/path",
+        "github.com",
+        "",
+    ] {
+        assert!(
+            matches!(
+                accounts_error(&format!(
+                    "[[github.enterprise]]\nserver = \"{server}\"\nid = \"{ID}\"\n"
+                )),
+                Some(AccountsError::Server(_))
+            ),
+            "{server}"
+        );
+    }
+    // One ID names one credential, whichever list it is in.
+    assert!(matches!(
+        accounts_error(&format!(
+            "[github]\naccounts = [{{ id = \"{ID}\" }}]\n[[github.enterprise]]\nserver = \"git.example.com\"\nid = \"{ID}\"\n"
+        )),
+        Some(AccountsError::DuplicateId(id)) if id == ID
+    ));
+    assert!(matches!(
+        Config::parse(&format!(
+            "[[github.enterprise]]\nserver = \"git.example.com\"\nid = \"{ID}\"\ntoken = \"secret\"\n"
+        )),
+        Err(crate::Error::GitHubSecretInConfig("token"))
+    ));
+}
+
+#[test]
+fn both_lists_share_the_account_limit() -> anyhow::Result<()> {
+    let accounts: Vec<String> = (0..MAX_ACCOUNTS - 1)
+        .map(|index| format!("{{ id = \"{index:032x}\" }}"))
+        .collect();
+    let config = Config::parse(&format!(
+        "[github]\naccounts = [{}]\n[[github.enterprise]]\nserver = \"a.example.com\"\nid = \"{ID}\"\n[[github.enterprise]]\nserver = \"b.example.com\"\nid = \"{OTHER}\"\n",
+        accounts.join(", ")
+    ))?;
+    assert_eq!(config.github.enterprise.len(), 1);
+    assert!(
+        config
+            .unknown_keys
+            .contains(&"github.enterprise.1".to_owned()),
+        "{:?}",
+        config.unknown_keys
+    );
+
+    let (_temp, _path, local, daemon) = files("")?;
+    for index in 0..MAX_ACCOUNTS - 1 {
+        Config::add_github_account_at(&local, &daemon, &account(&format!("{index:032x}"), &[]))?;
+    }
+    Config::add_enterprise_account_at(&local, &daemon, &enterprise("git.example.com", ID))?;
+    assert!(matches!(
+        Config::add_enterprise_account_at(&local, &daemon, &enterprise("git.example.com", OTHER)),
+        Err(crate::Error::GitHub(herdr_github::Error::Accounts(
+            AccountsError::TooMany(_)
+        )))
+    ));
+    Ok(())
+}
+
+#[test]
+fn enterprise_accounts_are_added_and_removed_in_their_own_list() -> anyhow::Result<()> {
+    let (_temp, path, local, daemon) =
+        files(&format!("[github]\naccounts = [{{ id = \"{OTHER}\" }}]\n"))?;
+    Config::add_enterprise_account_at(&local, &daemon, &enterprise("git.example.com", ID))?;
+    let loaded = Config::check_files_at(&path, &daemon)?;
+    assert_eq!(loaded.github.accounts, [account(OTHER, &[])]);
+    assert_eq!(
+        loaded.github.enterprise,
+        [enterprise("git.example.com", ID)]
+    );
+    assert!(matches!(
+        Config::add_enterprise_account_at(
+            &local,
+            &daemon,
+            &enterprise("https://bad", "1".repeat(32).as_str())
+        ),
+        Err(crate::Error::GitHub(herdr_github::Error::Accounts(
+            AccountsError::Server(_)
+        )))
+    ));
+    Config::remove_github_account_at(&local, &daemon, ID)?;
+    let text = fs::read_to_string(&local)?;
+    assert!(!text.contains("enterprise"), "{text}");
+    let loaded = Config::check_files_at(&path, &daemon)?;
+    assert_eq!(loaded.github.accounts, [account(OTHER, &[])]);
     Ok(())
 }

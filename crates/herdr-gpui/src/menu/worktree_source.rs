@@ -458,7 +458,7 @@ impl HerdrWindow {
             if !source.checkouts.listed {
                 self.list_checkouts();
             }
-            if self.pr_profile().is_some() {
+            if self.pr_signed_in() {
                 self.list_repo_items();
             }
         }
@@ -476,7 +476,7 @@ impl HerdrWindow {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        if tab.kind().is_some() && self.pr_profile().is_none() {
+        if tab.kind().is_some() && !self.pr_signed_in() {
             return;
         }
         let Some(source) = &mut self.menu.worktree else {

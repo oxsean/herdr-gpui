@@ -35,7 +35,7 @@ impl HerdrWindow {
     /// says where to sign in.
     pub(super) fn render_worktree_tabs(&self, cx: &mut Context<Self>) -> Div {
         let theme = &self.theme;
-        let connected = self.pr_profile().is_some();
+        let connected = self.pr_signed_in();
         let Some(source) = &self.menu.worktree else {
             return div();
         };
@@ -390,7 +390,7 @@ impl HerdrWindow {
             .worktree
             .as_ref()
             .map_or(Tab::New, |source| source.tab);
-        let connected = self.pr_profile().is_some();
+        let connected = self.pr_signed_in();
         let tabs: Vec<Tab> = Tab::ALL
             .into_iter()
             .filter(|tab| tab.kind().is_none() || connected)

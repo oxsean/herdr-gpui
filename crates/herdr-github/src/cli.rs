@@ -5,7 +5,7 @@
 //! logout` or a refreshed token takes effect at the next session check. The
 //! token arrives on a pipe, never an argument, and is never logged or shown.
 
-use super::{Profile, Result, profile_from, valid_token};
+use super::{Profile, Result, Server, profile_from, valid_token};
 use crate::pull_request;
 use secrecy::SecretString;
 use std::{
@@ -36,7 +36,7 @@ pub(super) fn profile() -> Result<Profile> {
 /// `token`'s account. GitHub refusing it means `gh` holds an expired or
 /// revoked token, which only `gh` can replace.
 pub(super) fn verify(token: SecretString) -> Result<Profile> {
-    profile_from(Arc::new(token), true).map_err(|error| match error {
+    profile_from(Server::GitHub, Arc::new(token), true).map_err(|error| match error {
         crate::Error::Authentication => Error::Rejected.into(),
         error => error,
     })

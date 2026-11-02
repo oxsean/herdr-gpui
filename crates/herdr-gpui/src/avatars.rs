@@ -333,7 +333,7 @@ fn local_config(cwd: &str, key: &str) -> Option<String> {
 }
 
 fn github_owner(remote: &str) -> Option<String> {
-    github_repo(remote).map(|(owner, _)| owner)
+    github_repo(remote, &[]).map(|repo| repo.owner)
 }
 
 fn cached_image(url: &str) -> Option<(Arc<Image>, bool)> {

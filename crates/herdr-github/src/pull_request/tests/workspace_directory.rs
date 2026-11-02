@@ -129,7 +129,7 @@ fn the_worker_resolves_the_directory_and_verifies_repository_and_branch() {
         repo.canonicalize().unwrap()
     );
     assert_eq!(
-        local_repository(&input, deadline(), &|| false).unwrap(),
+        local_repository(&input, &[], deadline(), &|| false).unwrap(),
         origin_base("example", "project")
     );
 

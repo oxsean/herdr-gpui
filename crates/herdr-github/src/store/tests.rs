@@ -63,6 +63,7 @@ fn competing_restores_load_the_rotated_credential_inside_the_transaction() {
                         }
                         assert_eq!(token.expose_secret(), "new-access");
                         Ok(Profile {
+                            server: Default::default(),
                             login: "fixture".into(),
                             avatar_url: String::new(),
                             token,
@@ -98,6 +99,7 @@ fn competing_restores_load_the_rotated_credential_inside_the_transaction() {
                 credential.profile_with(
                     |token| {
                         Ok(Profile {
+                            server: Default::default(),
                             login: "fixture".into(),
                             avatar_url: String::new(),
                             token,

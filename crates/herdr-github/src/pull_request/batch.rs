@@ -9,8 +9,7 @@ use super::{
     parse::current,
     parse_graphql, parse_numbered,
 };
-use crate::{Error, Tokens};
-use secrecy::SecretString;
+use crate::{Error, ServerToken, Tokens};
 use serde_json::{Value, json};
 use std::{
     fmt::Write as _,
@@ -54,7 +53,7 @@ pub(super) struct Batch {
     pub deferred: Vec<Input>,
     pub paused: Vec<Paused>,
     /// Checkouts read by an account that was already paused, never asked,
-    /// with that account's login.
+    /// with that account's name (see [`crate::Server::account_name`]).
     pub held: Vec<(Input, String)>,
 }
 
@@ -78,14 +77,15 @@ pub(super) fn fetch_batch(
     cancelled: impl Fn() -> bool,
 ) -> Batch {
     let mut batch = Batch::default();
+    let enterprise = tokens.enterprise();
     let targets = prepare(
         inputs,
         Instant::now() + PREPARE,
         Instant::now,
-        |input, deadline| target(input, origin, origins, deadline, &cancelled),
+        |input, deadline| target(input, origin, origins, &enterprise, deadline, &cancelled),
         &mut batch,
     );
-    for (login, token, targets) in by_token(targets, tokens) {
+    for (login, token, targets) in by_token(targets, tokens, &mut batch) {
         if paused.contains(&login) {
             batch
                 .held
@@ -115,26 +115,33 @@ pub(super) fn fetch_batch(
     batch
 }
 
-/// One account's login and token, and the targets it reads.
-pub(super) type Group = (String, Arc<SecretString>, Vec<(Input, Target)>);
+/// One account's name and token, and the targets it reads.
+pub(super) type Group = (String, ServerToken, Vec<(Input, Target)>);
 
 /// The targets each account reads, in the order their first one came: a
 /// request carries one token, so each account's repositories are asked in
-/// requests of their own.
-pub(super) fn by_token(targets: Vec<(Input, Target)>, tokens: &Tokens) -> Vec<Group> {
+/// requests of their own. A target no account on its server reads fails
+/// alone; it is never asked with another server's token.
+pub(super) fn by_token(
+    targets: Vec<(Input, Target)>,
+    tokens: &Tokens,
+    batch: &mut Batch,
+) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
     for (input, target) in targets {
-        let token = tokens.for_owner(&target.owner);
+        let (Some(token), Some(name)) = (
+            tokens.for_owner(&target.server, &target.owner),
+            tokens.name_for(&target.server, &target.owner),
+        ) else {
+            batch.found.push((input, Err(Error::Authentication)));
+            continue;
+        };
         match groups
             .iter_mut()
-            .find(|(_, known, _)| Arc::ptr_eq(known, token))
+            .find(|(_, known, _)| Arc::ptr_eq(&known.token, &token.token))
         {
             Some((_, _, group)) => group.push((input, target)),
-            None => groups.push((
-                tokens.login_for(&target.owner).to_owned(),
-                token.clone(),
-                vec![(input, target)],
-            )),
+            None => groups.push((name, token.clone(), vec![(input, target)])),
         }
     }
     groups
@@ -246,7 +253,7 @@ pub(super) fn ask(
 fn answer_for(
     response: Value,
     target: &Target,
-    token: &SecretString,
+    token: &ServerToken,
     cancelled: &impl Fn() -> bool,
     network: Option<&mut Option<Duration>>,
 ) -> Option<Result> {
@@ -268,7 +275,7 @@ fn crowded(
     target: &Target,
     branch: &str,
     head: &Head,
-    token: &SecretString,
+    token: &ServerToken,
     cancelled: &impl Fn() -> bool,
     cooldown: &mut Option<Duration>,
 ) -> Result {
@@ -306,7 +313,7 @@ fn crowded(
         return Ok(None);
     }
     response["data"]["repository"]["pullRequests"] = json!({"nodes": [pr]});
-    parse_graphql(response, owner, repo, branch, Some(head))
+    parse_graphql(response, &target.server, owner, repo, branch, Some(head))
 }
 
 /// The listed pull request from `head` its branch stands for, if any.
@@ -334,10 +341,21 @@ pub(super) fn matching_number(heads: &Value, head: &Head) -> crate::Result<Optio
 
 pub(super) fn parse(response: Value, target: &Target) -> Result {
     match &target.ask {
-        Ask::Branch { branch, head } => {
-            parse_graphql(response, &target.owner, &target.repo, branch, head.as_ref())
-        }
-        Ask::Number(number) => parse_numbered(response, &target.owner, &target.repo, *number),
+        Ask::Branch { branch, head } => parse_graphql(
+            response,
+            &target.server,
+            &target.owner,
+            &target.repo,
+            branch,
+            head.as_ref(),
+        ),
+        Ask::Number(number) => parse_numbered(
+            response,
+            &target.server,
+            &target.owner,
+            &target.repo,
+            *number,
+        ),
     }
 }
 
@@ -385,4 +403,49 @@ pub(super) fn query(targets: &[(Input, Target)]) -> (String, Value, Vec<(String,
     }
     let query = format!("query({}) {{\n{fields}}}{FIELDS}", declarations.join(", "));
     (query, Value::Object(variables), aliases)
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    let input = |branch: &str| Input {
+        checkout: None,
+        repo_key: None,
+        branch: branch.to_owned(),
+    };
+    let target = |repo: &str, ask| Target {
+        server: crate::Server::GitHub,
+        owner: "octo".to_owned(),
+        repo: repo.to_owned(),
+        ask,
+    };
+    let targets = [
+        (
+            input("main"),
+            target(
+                "one",
+                Ask::Branch {
+                    branch: "feature".to_owned(),
+                    head: None,
+                },
+            ),
+        ),
+        (
+            input("fix"),
+            target(
+                "two",
+                Ask::Branch {
+                    branch: "fix".to_owned(),
+                    head: Some(Head {
+                        owner: "octo".to_owned(),
+                        repo: "two".to_owned(),
+                        branch: "fix".to_owned(),
+                    }),
+                },
+            ),
+        ),
+        (input("pr/7"), target("three", Ask::Number(7))),
+    ];
+    crate::graphql_export::export("pullRequestBatch", &query(&targets).0);
+    crate::graphql_export::export("pullRequestHeads", HEADS);
 }

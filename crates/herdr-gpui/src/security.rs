@@ -69,6 +69,17 @@ impl Error {
     }
 }
 
+/// The GitHub.com account that reads `owner`'s alerts and reports. GitHub
+/// Enterprise Server repositories are not listed here.
+fn token<'a>(
+    tokens: &'a crate::github::Tokens,
+    owner: &str,
+) -> Result<&'a herdr_github::ServerToken, Error> {
+    tokens
+        .for_owner(&herdr_github::Server::GitHub, owner)
+        .ok_or_else(|| Error::Github(Box::new(herdr_github::Error::Authentication.into())))
+}
+
 /// The section's state in a window.
 pub(crate) struct Security {
     repos: Vec<Repo>,

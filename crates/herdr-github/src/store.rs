@@ -4,7 +4,7 @@
 //! keeps the token unencrypted on disk says so plainly.
 
 use super::{
-    Profile, Result, cli, credentials, profile,
+    Profile, Result, Server, cli, credentials, profile, profile_on,
     token::{Credential, GITHUB_CLI, Saved},
 };
 use crate::Error;
@@ -53,6 +53,9 @@ pub enum Account {
     /// An additional account, read for the repository owners it covers,
     /// keyed by its `[github] accounts` ID.
     Additional(String),
+    /// An account on a GitHub Enterprise Server, keyed by its server and its
+    /// `[[github.enterprise]]` ID.
+    Enterprise(Server, String),
 }
 
 impl Account {
@@ -67,12 +70,27 @@ impl Account {
         crate::config::valid_account_id(id).then(|| Self::Additional(id.to_owned()))
     }
 
+    /// The same rule, for an account on a GitHub Enterprise Server.
+    pub fn enterprise(server: &Server, id: &str) -> Option<Self> {
+        (server.is_enterprise() && crate::config::valid_account_id(id))
+            .then(|| Self::Enterprise(server.clone(), id.to_owned()))
+    }
+
+    /// The server the account signs in to.
+    pub fn server(&self) -> Server {
+        match self {
+            Self::Enterprise(server, _) => server.clone(),
+            Self::Main | Self::Host(_) | Self::Additional(_) => Server::GitHub,
+        }
+    }
+
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn keyring_account(&self) -> String {
         match self {
             Self::Main => "github.com".into(),
             Self::Host(id) => format!("github.com/host/{id}"),
             Self::Additional(id) => format!("github.com/account/{id}"),
+            Self::Enterprise(server, id) => format!("{server}/account/{id}"),
         }
     }
 
@@ -81,6 +99,7 @@ impl Account {
             Self::Main => "github-credentials".to_owned(),
             Self::Host(id) => format!("github-credentials-{id}"),
             Self::Additional(id) => format!("github-credentials-account-{id}"),
+            Self::Enterprise(_, id) => format!("github-credentials-enterprise-{id}"),
         };
         // No form can contain NUL: `host` and `additional` admit only hex digits.
         std::ffi::CString::new(name).unwrap_or_default()
@@ -279,9 +298,11 @@ fn load_saved(store: Store, account: &Account, github_cli: bool) -> Result<Resto
         Some(Saved::GitHubCli) if *account == Account::Main => Ok(Restored::GitHubCli),
         Some(Saved::GitHubCli) => Err(Error::Token),
         Some(Saved::Token(credential)) => credential
-            .profile_with(profile, Credential::refresh, |value| {
-                save_unlocked(Some(value), store, account)
-            })
+            .profile_with(
+                |token| profile_on(account.server(), token),
+                Credential::refresh,
+                |value| save_unlocked(Some(value), store, account),
+            )
             .map(|profile| Restored::Profile(Some(profile))),
     }
 }

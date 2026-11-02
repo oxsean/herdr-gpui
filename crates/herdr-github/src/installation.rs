@@ -226,7 +226,7 @@ fn get<T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     response(
         context,
-        agent(Duration::from_secs(15))
+        agent(&crate::Server::GitHub, Duration::from_secs(15))
             .get(url)
             .header("User-Agent", "Herdr-GPUI")
             .header("Accept", "application/vnd.github+json")

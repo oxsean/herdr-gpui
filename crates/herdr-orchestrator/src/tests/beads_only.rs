@@ -23,7 +23,7 @@ fn a_beads_folder_outside_git_is_a_project() {
     let source = info.beads_source().unwrap();
     assert_eq!(source.provider, Provider::Beads);
     assert_eq!(source.repository, info.main_root);
-    assert_eq!(sources(&info), vec![(source, true)]);
+    assert_eq!(sources(&info, &[]), vec![(source, true)]);
 }
 
 #[test]
@@ -45,7 +45,10 @@ fn ssh_beads_only_projects_have_no_git_source() {
         }
     );
     assert!(info.remote.is_none());
-    assert_eq!(sources(&info), vec![(info.beads_source().unwrap(), true)]);
+    assert_eq!(
+        sources(&info, &[]),
+        vec![(info.beads_source().unwrap(), true)]
+    );
 }
 
 #[test]

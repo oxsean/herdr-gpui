@@ -338,7 +338,7 @@ fn a_host_glab_knows_is_a_gitlab_source() {
         host: "ssh.corp.example".into(),
         repository: "team/app".into(),
     };
-    assert_eq!(crate::service::sources(&info), vec![(expected, true)]);
+    assert_eq!(crate::service::sources(&info, &[]), vec![(expected, true)]);
 
     for (remote, provider) in [
         ("git@git.corp.example:team/app.git", Provider::Gitlab),

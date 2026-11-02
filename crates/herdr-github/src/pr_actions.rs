@@ -9,7 +9,7 @@
 //! merge names the head commit the user saw, so GitHub refuses it if the
 //! branch moved since. Remote text is cleaned and bounded before display.
 use crate::pull_request::{self, MergeMethod, PullRequest, State, clean};
-use secrecy::SecretString;
+use crate::{Server, ServerToken};
 use serde_json::Value;
 use std::{
     sync::{
@@ -64,6 +64,7 @@ const MERGE_MUTATION: &str = r#"mutation($id: ID!, $method: PullRequestMergeMeth
 /// the head too, so a pushed branch is a different target to merge.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
+    pub server: Server,
     pub owner: String,
     pub repo: String,
     pub number: u64,
@@ -90,6 +91,7 @@ impl Target {
     /// The same pull request, whatever its head commit.
     pub fn same_pull_request(&self, other: &Self) -> bool {
         self.number == other.number
+            && self.server == other.server
             && self.owner.eq_ignore_ascii_case(&other.owner)
             && self.repo.eq_ignore_ascii_case(&other.repo)
     }
@@ -112,10 +114,15 @@ impl Target {
             return Err(Error::Target.into());
         }
         // Parsing re-wrote the URL to exactly this shape after checking it.
-        let path = pr
+        let (host, path) = pr
             .url
-            .strip_prefix("https://github.com/")
+            .strip_prefix("https://")
+            .and_then(|url| url.split_once('/'))
             .ok_or(Error::Target)?;
+        let server = match host {
+            "github.com" => Server::GitHub,
+            host => Server::enterprise(host).ok_or(Error::Target)?,
+        };
         let mut parts = path.split('/');
         let (Some(owner), Some(repo), Some("pull"), Some(number), None) = (
             parts.next(),
@@ -130,6 +137,7 @@ impl Target {
             return Err(Error::Target.into());
         }
         Ok(Self {
+            server,
             owner: owner.into(),
             repo: repo.into(),
             number: pr.number,
@@ -241,7 +249,7 @@ enum Completion {
     Action(crate::Result<Outcome>),
 }
 
-type Request = (u64, Target, Job, Arc<SecretString>);
+type Request = (u64, Target, Job, ServerToken);
 
 struct Worker {
     requests: mpsc::SyncSender<Request>,
@@ -255,7 +263,7 @@ pub struct Actions {
     worker: Option<Worker>,
     generation: Arc<AtomicU64>,
     busy: bool,
-    waiting: Option<(Target, Job, Arc<SecretString>)>,
+    waiting: Option<(Target, Job, ServerToken)>,
     target: Option<Target>,
     /// Shared, so a view can tell the same read apart from a new one at once.
     comments: Option<Arc<[Comment]>>,
@@ -345,7 +353,7 @@ impl Actions {
 
     /// Read the review conversation. An explicit request each time the user
     /// opens it; a failure is shown, not retried in the background.
-    pub fn load_comments(&mut self, token: Arc<SecretString>) -> crate::Result<()> {
+    pub fn load_comments(&mut self, token: ServerToken) -> crate::Result<()> {
         let target = self.target.clone().ok_or(Error::Target)?;
         if self.running.is_some() {
             return Err(Error::Busy.into());
@@ -363,7 +371,7 @@ impl Actions {
         &mut self,
         action: Action,
         allowed: &[MergeMethod],
-        token: Arc<SecretString>,
+        token: ServerToken,
     ) -> crate::Result<()> {
         if self.running.is_some() {
             return Err(Error::Busy.into());
@@ -511,7 +519,7 @@ fn spawn(current: Arc<AtomicU64>) -> crate::Result<Worker> {
 
 fn conversation(
     target: &Target,
-    token: &SecretString,
+    token: &ServerToken,
     cancelled: impl Fn() -> bool,
 ) -> crate::Result<Vec<Comment>> {
     let response = crate::graphql(
@@ -682,4 +690,12 @@ fn text(value: &Value) -> String {
 
 fn bounded(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
+}
+
+#[cfg(test)]
+#[test]
+fn export_graphql() {
+    crate::graphql_export::export("pullRequestConversation", CONVERSATION_QUERY);
+    crate::graphql_export::export("addComment", COMMENT_MUTATION);
+    crate::graphql_export::export("mergePullRequest", MERGE_MUTATION);
 }

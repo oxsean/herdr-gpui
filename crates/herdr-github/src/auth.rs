@@ -6,9 +6,9 @@
 use super::VERIFY_URL;
 use super::{
     Account, Device, Profile, Reply, Result, SETUP_MESSAGE, Store, cli,
-    device::{with_access, with_organizations},
+    device::{InstallationOrganizations, with_access, with_organizations},
     http::oauth,
-    log, profile, save,
+    log, profile_on, save,
     store::save_github_cli,
     token_reply, valid_token,
 };
@@ -86,6 +86,7 @@ impl Auth {
             initialized: true,
             last_session_check: Some(Instant::now()),
             profile: Some(Profile {
+                server: super::Server::GitHub,
                 login: "fixture-user".into(),
                 avatar_url: String::new(),
                 token: Arc::new("fixture-token".into()),
@@ -266,7 +267,13 @@ impl Auth {
         true
     }
     pub fn start(&mut self, config: &crate::config::GitHubConfig) {
-        if self.busy() || self.connected() || self.loading_profile() {
+        // Device codes come from GitHub.com; an Enterprise account signs in
+        // with a pasted token instead.
+        if self.busy()
+            || self.connected()
+            || self.loading_profile()
+            || self.account.server().is_enterprise()
+        {
             return;
         }
         self.store = super::store::select(config);
@@ -404,7 +411,7 @@ impl Auth {
                 return Err(Error::Token);
             }
             let token: SecretString = token.into();
-            let profile = profile(Arc::new(token.clone()))?;
+            let profile = profile_on(account.server(), Arc::new(token.clone()))?;
             save(Some(&token), store, &account)?;
             Ok(Reply::Pasted(complete(profile, &account)))
         });
@@ -510,7 +517,7 @@ impl Auth {
         let github_cli = self.github_cli;
         self.poll_with(persist, move |token, store| {
             let loaded = match token {
-                Some(token) => profile(token).map(Some),
+                Some(token) => profile_on(account.server(), token).map(Some),
                 None => super::store::load_profile(store, &account, github_cli),
             }?;
             Ok(loaded.map(|profile| complete(profile, &account)))
@@ -702,6 +709,7 @@ impl Auth {
                                 Account::Main => "Signed out for this app session. Saved credential removed. Environment tokens are suppressed until app restart; GitHub grants are not revoked.",
                                 Account::Host(_) => "Signed out of this device's account. Saved credential removed; GitHub grants are not revoked. Pull requests here use your main account.",
                                 Account::Additional(_) => "Signed out of this account. Saved credential removed; GitHub grants are not revoked. Its repositories use your main account.",
+                                Account::Enterprise(..) => "Signed out of this account. Saved credential removed; the token is not revoked. Its server's repositories use another account there, if any.",
                             }.into());
                         }
                         Ok(Reply::Pasted(profile)) => {
@@ -789,9 +797,13 @@ impl Auth {
 /// A loaded account, with what its GitHub App installations still need and
 /// what an additional account also needs: the organizations it covers.
 fn complete(profile: Profile, account: &Account) -> Profile {
+    // GitHub App installations exist on GitHub.com only.
+    if let Account::Enterprise(..) = account {
+        return with_organizations(profile, InstallationOrganizations::Unavailable);
+    }
     let (profile, installed) = with_access(profile);
     match account {
         Account::Additional(_) => with_organizations(profile, installed),
-        Account::Main | Account::Host(_) => profile,
+        Account::Main | Account::Host(_) | Account::Enterprise(..) => profile,
     }
 }

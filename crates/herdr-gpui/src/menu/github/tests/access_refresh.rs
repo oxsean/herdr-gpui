@@ -20,6 +20,7 @@ fn add_account(view: &mut crate::HerdrWindow) {
     }];
     view.menu.github_accounts = vec![AdditionalAccount {
         id: ID.into(),
+        server: herdr_github::Server::GitHub,
         owners: Vec::new(),
         auth: waiting(),
     }];

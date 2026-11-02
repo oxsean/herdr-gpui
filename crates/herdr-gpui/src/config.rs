@@ -86,7 +86,7 @@ use fonts::FontSettings;
 pub use fonts::symbol_fallbacks;
 pub use fonts::{FONT_SIZE_RANGE, FONT_SIZE_STEP, FontConfig};
 pub(crate) use github::MAX_ACCOUNTS;
-pub use github::{GitHubAccount, GitHubConfig};
+pub use github::{EnterpriseAccount, GitHubAccount, GitHubConfig};
 pub use herdr_orchestrator::gitlab::Config as GitLabConfig;
 pub use herdr_remote::config::AzureConfig;
 #[cfg(feature = "azure")]

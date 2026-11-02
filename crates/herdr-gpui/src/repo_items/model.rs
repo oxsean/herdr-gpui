@@ -150,7 +150,8 @@ fn item(node: &Value, origin: &Origin, kind: Kind) -> Option<Item> {
         // Rebuilt from the repository that was asked for, so a response can
         // never point a row at another repository.
         url: format!(
-            "https://github.com/{}/{}/{}/{number}",
+            "{}/{}/{}/{}/{number}",
+            origin.server.web_url(),
             origin.owner,
             origin.repo,
             match kind {

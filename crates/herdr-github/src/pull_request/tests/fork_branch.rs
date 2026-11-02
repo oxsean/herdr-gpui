@@ -26,9 +26,15 @@ fn fork_branch_names_carry_only_a_canonical_number() {
 
 #[test]
 fn fork_branch_finds_its_pull_request_by_number() {
-    let pr = parse_numbered(numbered(fork_pr()), "example", "project", 8)
-        .unwrap()
-        .unwrap();
+    let pr = parse_numbered(
+        numbered(fork_pr()),
+        &crate::Server::GitHub,
+        "example",
+        "project",
+        8,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(pr.number, 8);
     assert_eq!(pr.url, "https://github.com/example/project/pull/8");
     assert_eq!(pr.head_ref_name, "fix/plugin-shortcut-reference");
@@ -38,33 +44,63 @@ fn fork_branch_finds_its_pull_request_by_number() {
 #[test]
 fn fork_branch_rejects_same_repository_missing_and_mismatched_pulls() {
     assert!(
-        parse_numbered(numbered(serde_json::Value::Null), "example", "project", 8)
-            .unwrap()
-            .is_none()
+        parse_numbered(
+            numbered(serde_json::Value::Null),
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            8
+        )
+        .unwrap()
+        .is_none()
     );
     // A same-repository PR has a real branch name, so `pr/8` was not made for it.
     let mut same = fork_pr();
     same["isCrossRepository"] = false.into();
     assert!(
-        parse_numbered(numbered(same), "example", "project", 8)
-            .unwrap()
-            .is_none()
+        parse_numbered(
+            numbered(same),
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            8
+        )
+        .unwrap()
+        .is_none()
     );
     let mut deleted = fork_pr();
     deleted["headRepository"] = serde_json::Value::Null;
     assert!(
-        parse_numbered(numbered(deleted), "example", "project", 8)
-            .unwrap()
-            .is_none()
+        parse_numbered(
+            numbered(deleted),
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            8
+        )
+        .unwrap()
+        .is_none()
     );
     assert!(matches!(
-        parse_numbered(numbered(fork_pr()), "example", "project", 9),
+        parse_numbered(
+            numbered(fork_pr()),
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            9
+        ),
         Err(Error::PullRequest(crate::pull_request::Error::Identity))
     ));
     let mut elsewhere = fork_pr();
     elsewhere["url"] = "https://github.com/other/project/pull/8".into();
     assert!(matches!(
-        parse_numbered(numbered(elsewhere), "example", "project", 8),
+        parse_numbered(
+            numbered(elsewhere),
+            &crate::Server::GitHub,
+            "example",
+            "project",
+            8
+        ),
         Err(Error::PullRequest(crate::pull_request::Error::Identity))
     ));
 }

@@ -151,7 +151,7 @@ pub(super) fn alert(
     let mut cooldown = None;
     let response = crate::github::graphql(
         "security",
-        tokens.for_owner(owner),
+        crate::security::token(tokens, owner)?,
         ALERT_QUERY,
         serde_json::json!({"owner": owner, "repo": repo, "number": number}),
         TIMEOUT,
@@ -175,7 +175,7 @@ pub(super) fn report(
     if !ghsa(advisory) {
         return Err(Error::Output);
     }
-    let token = tokens.for_owner(owner);
+    let token = crate::security::token(tokens, owner)?;
     let path = format!("/repos/{name}/security-advisories/{advisory}");
     let node: AdvisoryNode = crate::github::rest("security", token, &path, TIMEOUT, &cancelled)
         .map_err(|error| Error::Github(Box::new(error.into())))?;
